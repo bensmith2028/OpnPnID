@@ -65,6 +65,10 @@ interface SketchStoreState {
   /** Whether the Library panel is shown (replaces the Properties Panel in the same
    * sidebar slot while open). */
   libraryPanelOpen: boolean;
+  /** Id of the placed component the RealHardwareModal is open for, or null when closed —
+   * opened by double-clicking a component on the canvas (see SketchCanvas) or from its
+   * Properties Panel entry. */
+  realHardwareModalComponentId: Id | null;
   filePath: string | null;
   dirty: boolean;
   past: HistoryEntry[];
@@ -75,6 +79,9 @@ interface SketchStoreState {
    * in one step — what the Library panel's "Place" action calls. */
   armComponent: (categoryId: string, realPartId: string | null) => void;
   toggleLibraryPanel: () => void;
+  /** Opens the real-hardware assignment modal for a placed component instance. */
+  openRealHardwareModal: (componentId: Id) => void;
+  closeRealHardwareModal: () => void;
   setCamera: (camera: CameraState) => void;
   setSelection: (selection: Selection) => void;
   setTheme: (theme: Theme) => void;
@@ -138,6 +145,7 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
   theme: loadInitialTheme(),
   armedComponent: null,
   libraryPanelOpen: false,
+  realHardwareModalComponentId: null,
   filePath: null,
   dirty: false,
   past: [],
@@ -147,6 +155,8 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
   armComponent: (categoryId, realPartId) =>
     set({ activeTool: 'component', armedComponent: { categoryId, realPartId }, selection: emptySelection() }),
   toggleLibraryPanel: () => set((s) => ({ libraryPanelOpen: !s.libraryPanelOpen })),
+  openRealHardwareModal: (componentId) => set({ realHardwareModalComponentId: componentId }),
+  closeRealHardwareModal: () => set({ realHardwareModalComponentId: null }),
   setCamera: (camera) => set({ camera }),
   setSelection: (selection) => set({ selection }),
   setTheme: (theme) => {
