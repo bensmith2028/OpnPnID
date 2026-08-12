@@ -2,12 +2,12 @@ import { useEffect, useState } from 'react';
 import { useSketchStore } from '../canvas/store/useSketchStore';
 import * as db from './db';
 import { describeError } from './errors';
-import { RealPartSection } from './RealPartForm';
 
 /** Category list + add form for one family. Each category is the fine-grained,
  * symbol-owning classification ("Automated 2-Way Valve") — expandable to show/manage
- * both its attribute schema (the "make these attributes configurable too" surface) and
- * its real parts (RealPartSection). `editMode` gates the Delete button (see
+ * its attribute schema (the "make these attributes configurable too" surface). Real
+ * hardware (real parts) is no longer managed here — it lives in the RealHardwareModal
+ * opened from a placed component on the canvas. `editMode` gates the Delete button (see
  * LibraryPanel's Edit toggle) — Place stays always available. */
 export function CategorySection({ familyId, editMode }: { familyId: string; editMode: boolean }) {
   const [categories, setCategories] = useState<db.Category[]>([]);
@@ -75,12 +75,7 @@ export function CategorySection({ familyId, editMode }: { familyId: string; edit
               </button>
               {editMode && <button onClick={() => void removeCategory(c.id, c.name)}>Delete</button>}
             </div>
-            {expandedId === c.id && (
-              <>
-                <AttributeDefinitionsEditor categoryId={c.id} editMode={editMode} />
-                <RealPartSection categoryId={c.id} editMode={editMode} onArm={(realPartId) => armComponent(c.id, realPartId)} />
-              </>
-            )}
+            {expandedId === c.id && <AttributeDefinitionsEditor categoryId={c.id} editMode={editMode} />}
           </li>
         ))}
       </ul>

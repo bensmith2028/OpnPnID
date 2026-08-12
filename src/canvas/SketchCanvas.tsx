@@ -7,7 +7,7 @@ import { drawArcCancel, drawArcOnPointerDown, drawArcOnPointerMove } from './too
 import { drawCircleCancel, drawCircleOnPointerDown, drawCircleOnPointerMove } from './tools/drawCircleTool';
 import { componentOnPointerDown, componentOnPointerMove } from './tools/componentTool';
 import { pointOnPointerDown, pointOnPointerMove } from './tools/pointTool';
-import { selectOnPointerDown, selectOnPointerMove, selectOnPointerUp } from './tools/selectTool';
+import { componentAtWorld, selectOnPointerDown, selectOnPointerMove, selectOnPointerUp } from './tools/selectTool';
 import { createInteractionState } from './tools/types';
 import type { CanvasSize } from './tools/types';
 import { screenToWorld, zoomAround } from './viewport';
@@ -164,6 +164,21 @@ export function SketchCanvas() {
     [activeTool],
   );
 
+  // Double-clicking a placed component opens the real-hardware assignment modal — the
+  // one place a component's real part gets picked/added now that LibraryPanel only
+  // places bare category symbols.
+  const onDoubleClick = useCallback(
+    (e: React.MouseEvent) => {
+      if (activeTool !== 'select') return;
+      const rect = canvasRef.current!.getBoundingClientRect();
+      const screen = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      const world = screenToWorld(screen, useSketchStore.getState().camera, sizeRef.current);
+      const instance = componentAtWorld(world);
+      if (instance) useSketchStore.getState().openRealHardwareModal(instance.id);
+    },
+    [activeTool],
+  );
+
   const onWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault();
     const rect = canvasRef.current!.getBoundingClientRect();
@@ -229,6 +244,7 @@ export function SketchCanvas() {
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
+        onDoubleClick={onDoubleClick}
         onWheel={onWheel}
       />
     </div>

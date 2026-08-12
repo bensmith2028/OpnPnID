@@ -281,6 +281,14 @@ export function selectOnPointerUp(ctx: ToolCtx) {
   ctx.requestRedraw();
 }
 
+/** Finds the placed component instance (if any) under a world point, using the same
+ * body hit test as the select tool's own pointer-down handling. Exposed for callers
+ * outside this module (e.g. SketchCanvas's double-click-to-open-the-real-hardware-modal
+ * handler) that need "what component is here" without duplicating hitTestComponent. */
+export function componentAtWorld(world: Vec2): ComponentInstance | null {
+  return hitTestComponent(world, worldThreshold());
+}
+
 export function selectHitTestForCursor(world: Vec2): 'point' | 'line' | 'arc' | 'component' | null {
   const threshold = worldThreshold();
   const point = hitTestPoint(world, threshold);

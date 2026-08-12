@@ -3,7 +3,6 @@ import { useEffect, useState } from 'react';
 import type { AxisLock, Id, Line } from '../types/geometry';
 import { useSketchStore } from '../canvas/store/useSketchStore';
 import type { SceneGraph } from '../canvas/sceneGraph';
-import { buildComponentSnapshot, listRealParts, type RealPart } from '../library/db';
 
 const RAD_TO_DEG = 180 / Math.PI;
 
@@ -284,25 +283,18 @@ function ComponentProperties({ componentId }: { componentId: Id }) {
   const version = useSketchStore((s) => s.version);
   const setComponentTag = useSketchStore((s) => s.setComponentTag);
   const setComponentRotationDeg = useSketchStore((s) => s.setComponentRotationDeg);
-  const setComponentPart = useSketchStore((s) => s.setComponentPart);
 
   const graph = useSketchStore.getState().graph;
   const instance = graph.components.get(componentId);
 
   const [tagText, setTagText] = useState('');
   const [rotationText, setRotationText] = useState('');
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [pickerParts, setPickerParts] = useState<RealPart[] | null>(null);
-  const [pickerError, setPickerError] = useState<string | null>(null);
 
   useEffect(() => {
     if (instance) {
       setTagText(instance.tag);
       setRotationText(normalizeDegrees(instance.rotation * RAD_TO_DEG).toFixed(1));
     }
-    setPickerOpen(false);
-    setPickerParts(null);
-    setPickerError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [componentId, version]);
 
@@ -317,34 +309,6 @@ function ComponentProperties({ componentId }: { componentId: Id }) {
     const value = parseFloat(rotationText);
     if (Number.isFinite(value)) setComponentRotationDeg(componentId, value);
     else setRotationText(normalizeDegrees(instance.rotation * RAD_TO_DEG).toFixed(1));
-  };
-
-  // A category now *is* the fine-grained unit — port count and symbol are fixed by
-  // construction — so "Change Part" simply lists the category's other real parts, no
-  // port-count-compatibility filtering needed (see SceneGraph.setComponentPart).
-  const openPicker = async () => {
-    setPickerOpen(true);
-    setPickerError(null);
-    setPickerParts(null);
-    try {
-      const parts = await listRealParts(instance.categoryId);
-      setPickerParts(parts.filter((p) => p.id !== instance.realPartId));
-    } catch {
-      setPickerError('Could not load parts from the library.');
-    }
-  };
-
-  const choosePart = async (part: RealPart) => {
-    const snapshot = await buildComponentSnapshot(instance.categoryId, part.id);
-    if (!snapshot) return;
-    setComponentPart(componentId, part.id, snapshot);
-    setPickerOpen(false);
-  };
-
-  const clearPart = async () => {
-    const snapshot = await buildComponentSnapshot(instance.categoryId, null);
-    if (!snapshot) return;
-    setComponentPart(componentId, null, snapshot);
   };
 
   const realPart = instance.snapshot.realPart;
@@ -400,33 +364,9 @@ function ComponentProperties({ componentId }: { componentId: Id }) {
           <div className="readonly-value">No part assigned</div>
         )}
         <div className="fillet-row">
-          <button onClick={() => void openPicker()}>{realPart ? 'Change Part' : 'Assign Part'}</button>
-          {realPart && <button onClick={() => void clearPart()}>Clear</button>}
+          <button onClick={() => useSketchStore.getState().openRealHardwareModal(componentId)}>Real Hardware…</button>
         </div>
       </div>
-
-      {pickerOpen && (
-        <div className="field">
-          <span>Choose a part</span>
-          {pickerError && <p className="field-error">{pickerError}</p>}
-          {!pickerError && pickerParts === null && <div className="readonly-value">Loading…</div>}
-          {!pickerError && pickerParts && pickerParts.length === 0 && (
-            <div className="readonly-value">No other parts in this category yet.</div>
-          )}
-          {!pickerError && pickerParts && pickerParts.length > 0 && (
-            <ul className="component-part-list">
-              {pickerParts.map((part) => (
-                <li key={part.id}>
-                  <button onClick={() => void choosePart(part)}>
-                    {part.manufacturer} {part.modelNumber}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-          <button onClick={() => setPickerOpen(false)}>Cancel</button>
-        </div>
-      )}
     </div>
   );
 }
