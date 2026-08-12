@@ -43,7 +43,7 @@ export interface ArmedComponent {
 }
 
 /** One copied component, captured by value (not by id) so later edits/deletes of the
- * original don't corrupt or invalidate the clipboard — see copySelectedComponents. */
+ * original don't corrupt or invalidate the clipboard — see copySelection. */
 interface ClipboardComponent {
   categoryId: string;
   realPartId: string | null;
@@ -51,6 +51,34 @@ interface ClipboardComponent {
   tag: string;
   position: Vec2;
   rotation: number;
+}
+
+/** The free-geometry (non-component) half of a copied selection — pipe segments, not
+ * symbols. `points` carries every point a copied line/arc needs (its own endpoints get
+ * pulled in automatically even if only the edge, not the point, was selected — see
+ * copySelection), keyed by their *original* id so pasteSelection can remap line/arc
+ * endpoints onto the freshly created points. */
+interface ClipboardPoint {
+  id: Id;
+  x: number;
+  y: number;
+}
+interface ClipboardLine {
+  startId: Id;
+  endId: Id;
+  axisLock: AxisLock;
+}
+interface ClipboardArc {
+  startId: Id;
+  endId: Id;
+  bulge: number;
+}
+
+interface SketchClipboard {
+  components: ClipboardComponent[];
+  points: ClipboardPoint[];
+  lines: ClipboardLine[];
+  arcs: ClipboardArc[];
 }
 
 /** World-unit offset applied to each successive paste of the same clipboard (a "cascade"
@@ -93,10 +121,10 @@ interface SketchStoreState {
    * opened by double-clicking a component on the canvas (see SketchCanvas) or from its
    * Properties Panel entry. */
   realHardwareModalComponentId: Id | null;
-  /** Last-copied components (Ctrl/Cmd+C on the current selection), or null if nothing's
-   * been copied yet this session. Not persisted with the project — an in-app clipboard,
-   * not the OS one, so paste only ever targets this same document. */
-  componentClipboard: ClipboardComponent[] | null;
+  /** Last-copied selection (Ctrl/Cmd+C — components *and* any selected lines/arcs/points),
+   * or null if nothing's been copied yet this session. Not persisted with the project — an
+   * in-app clipboard, not the OS one, so paste only ever targets this same document. */
+  clipboard: SketchClipboard | null;
   /** How many times the current clipboard has been pasted, so each successive paste can
    * cascade its offset instead of landing exactly on the previous paste. Reset on copy. */
   pasteCount: number;
@@ -156,14 +184,17 @@ interface SketchStoreState {
   }) => void;
   setComponentTag: (componentId: Id, tag: string) => void;
   setComponentRotationDeg: (componentId: Id, degrees: number) => void;
-  /** Copies the currently-selected components to the in-app clipboard. No-op if none are
-   * selected (leaves any existing clipboard content untouched). */
-  copySelectedComponents: () => void;
-  /** Pastes the clipboard's components back in, offset from their original positions
-   * (cascading further on each repeated paste — see PASTE_OFFSET) and re-tagged to avoid
-   * duplicate tags, then selects the newly-pasted instances. No-op if the clipboard is
-   * empty. */
-  pasteComponents: () => void;
+  /** Copies the current selection to the in-app clipboard — components, plus any selected
+   * lines/arcs/points (a selected edge pulls its own endpoints in even if they weren't
+   * individually selected). No-op if nothing's selected (leaves any existing clipboard
+   * content untouched). */
+  copySelection: () => void;
+  /** Pastes the clipboard back in — components re-tagged to avoid duplicate tags, free
+   * geometry with fresh point/line/arc ids — offset from its original position (cascading
+   * further on each repeated paste — see PASTE_OFFSET), then selects the newly-pasted
+   * items so the whole batch can be dragged as a group right away. No-op if the clipboard
+   * is empty. */
+  pasteSelection: () => void;
   /** Reassigns a placed instance to a different real part within the same category.
    * Refuses (returns false) if the port count would differ from what's currently placed
    * — see SceneGraph.setComponentPart. */
@@ -187,7 +218,7 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
   armedComponent: null,
   libraryPanelOpen: false,
   realHardwareModalComponentId: null,
-  componentClipboard: null,
+  clipboard: null,
   pasteCount: 0,
   filePath: null,
   dirty: false,
@@ -387,15 +418,15 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
     return ok;
   },
 
-  copySelectedComponents: () => {
+  copySelection: () => {
     const { graph, selection } = get();
-    const clipboard: ClipboardComponent[] = [];
+    const components: ClipboardComponent[] = [];
     for (const id of selection.componentIds) {
       const instance = graph.components.get(id);
       if (!instance) continue;
       // Deep-cloned, not a spread — snapshot.realPart.specs is a nested object, and the
       // clipboard must survive independently of any later edit to the original.
-      clipboard.push({
+      components.push({
         categoryId: instance.categoryId,
         realPartId: instance.realPartId,
         snapshot: cloneSnapshot(instance.snapshot),
@@ -404,18 +435,60 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
         rotation: instance.rotation,
       });
     }
-    if (clipboard.length === 0) return;
-    set({ componentClipboard: clipboard, pasteCount: 0 });
+
+    // Free geometry (pipe segments): every directly-selected point, plus the endpoints of
+    // every selected line/arc — an edge comes along once *both* its endpoints are copied,
+    // so selecting just a line (without its endpoints individually selected) still copies
+    // a usable line rather than nothing. Ports (component-owned points) are never copied
+    // on their own; a copied component brings its own ports along when it's pasted.
+    const pointIds = new Set(selection.pointIds);
+    for (const id of selection.lineIds) {
+      const line = graph.lines.get(id);
+      if (line) {
+        pointIds.add(line.startId);
+        pointIds.add(line.endId);
+      }
+    }
+    for (const id of selection.arcIds) {
+      const arc = graph.arcs.get(id);
+      if (arc) {
+        pointIds.add(arc.startId);
+        pointIds.add(arc.endId);
+      }
+    }
+    for (const id of pointIds) if (graph.componentOwning(id)) pointIds.delete(id);
+
+    const points: ClipboardPoint[] = [];
+    for (const id of pointIds) {
+      const p = graph.points.get(id);
+      if (p) points.push({ id: p.id, x: p.x, y: p.y });
+    }
+    const lines: ClipboardLine[] = [];
+    for (const line of graph.lines.values()) {
+      if (pointIds.has(line.startId) && pointIds.has(line.endId)) {
+        lines.push({ startId: line.startId, endId: line.endId, axisLock: line.axisLock });
+      }
+    }
+    const arcs: ClipboardArc[] = [];
+    for (const arc of graph.arcs.values()) {
+      if (pointIds.has(arc.startId) && pointIds.has(arc.endId)) {
+        arcs.push({ startId: arc.startId, endId: arc.endId, bulge: arc.bulge });
+      }
+    }
+
+    if (components.length === 0 && points.length === 0) return;
+    set({ clipboard: { components, points, lines, arcs }, pasteCount: 0 });
   },
 
-  pasteComponents: () => {
-    const { graph, componentClipboard, pasteCount, componentScale } = get();
-    if (!componentClipboard || componentClipboard.length === 0) return;
+  pasteSelection: () => {
+    const { graph, clipboard, pasteCount, componentScale } = get();
+    if (!clipboard || (clipboard.components.length === 0 && clipboard.points.length === 0)) return;
     const before = graph.toJSON();
     const offset = PASTE_OFFSET * (pasteCount + 1);
+
     const existingTags = new Set([...graph.components.values()].map((c) => c.tag));
-    const newIds: Id[] = [];
-    for (const item of componentClipboard) {
+    const newComponentIds: Id[] = [];
+    for (const item of clipboard.components) {
       // Re-tag rather than reuse the copied tag verbatim — placed components should have
       // unique ISA-lite tags, and pasting a duplicate would silently break that.
       const letter = item.tag.split('-')[0] || 'X';
@@ -430,10 +503,46 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
         snapshot: cloneSnapshot(item.snapshot),
         scaleFactor: componentScale,
       });
-      newIds.push(instance.id);
+      newComponentIds.push(instance.id);
     }
+
+    // Fresh ids throughout (SceneGraph's own counter — already bumped past every id in the
+    // loaded document by fromJSON, so plain `addPoint`/`addLine`/`addArc` calls can't
+    // collide with anything already on the canvas).
+    const idMap = new Map<Id, Id>();
+    const newPointIds: Id[] = [];
+    for (const p of clipboard.points) {
+      const created = graph.addPoint(p.x + offset, p.y + offset);
+      idMap.set(p.id, created.id);
+      newPointIds.push(created.id);
+    }
+    const newLineIds: Id[] = [];
+    for (const l of clipboard.lines) {
+      const startId = idMap.get(l.startId);
+      const endId = idMap.get(l.endId);
+      if (!startId || !endId) continue;
+      const created = graph.addLine(startId, endId, l.axisLock);
+      if (created) newLineIds.push(created.id);
+    }
+    const newArcIds: Id[] = [];
+    for (const a of clipboard.arcs) {
+      const startId = idMap.get(a.startId);
+      const endId = idMap.get(a.endId);
+      if (!startId || !endId) continue;
+      const created = graph.addArc(startId, endId, a.bulge);
+      if (created) newArcIds.push(created.id);
+    }
+
+    // Select the whole freshly-pasted batch — points, lines, arcs *and* components
+    // together — so it can be dragged into place as one group right away (see
+    // selectTool.ts's group drag).
     set({
-      selection: { pointIds: new Set(), lineIds: new Set(), arcIds: new Set(), componentIds: new Set(newIds) },
+      selection: {
+        pointIds: new Set(newPointIds),
+        lineIds: new Set(newLineIds),
+        arcIds: new Set(newArcIds),
+        componentIds: new Set(newComponentIds),
+      },
       pasteCount: pasteCount + 1,
     });
     get().commit(before);

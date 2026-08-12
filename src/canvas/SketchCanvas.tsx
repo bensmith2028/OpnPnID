@@ -197,9 +197,10 @@ export function SketchCanvas() {
     useSketchStore.getState().setCamera(zoomAround(camera, anchor, factor, sizeRef.current));
   }, []);
 
-  // Keyboard shortcuts: Escape, Delete, Undo/Redo, Copy/Paste (selected components),
-  // Space-to-pan, Alt-to-disable-snap. Undo/Redo/Copy/Paste are also handled here via a
-  // plain Ctrl/Cmd+Z|Y|C|V keydown check — this is the *only* path on Windows/Linux, and
+  // Keyboard shortcuts: Escape, Delete, Undo/Redo, Copy/Paste (selected components and/or
+  // lines/arcs/points), Space-to-pan, Alt-to-disable-snap. Undo/Redo/Copy/Paste are also
+  // handled here via a plain Ctrl/Cmd+Z|Y|C|V keydown check — this is the *only* path on
+  // Windows/Linux, and
   // still a live fallback on macOS for Cmd+Y (redo), which isn't bound to a native menu
   // item below. Cmd+Z/C/V *are* claimed by the native Edit menu on macOS (see the
   // `onNativeMenuAction` effect below), so AppKit consumes those accelerators before they'd
@@ -233,10 +234,10 @@ export function SketchCanvas() {
         useSketchStore.getState().redo();
       } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'c') {
         e.preventDefault();
-        useSketchStore.getState().copySelectedComponents();
+        useSketchStore.getState().copySelection();
       } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'v') {
         e.preventDefault();
-        useSketchStore.getState().pasteComponents();
+        useSketchStore.getState().pasteSelection();
       } else if (!e.metaKey && !e.ctrlKey && !e.altKey) {
         if (e.key.toLowerCase() === 'v') useSketchStore.getState().setTool('select');
         else if (e.key.toLowerCase() === 'l') useSketchStore.getState().setTool('line');
@@ -271,8 +272,8 @@ export function SketchCanvas() {
         }
         if (isSymbolEditorOpen()) return;
         const store = useSketchStore.getState();
-        if (action === 'copy') store.copySelectedComponents();
-        else if (action === 'paste') store.pasteComponents();
+        if (action === 'copy') store.copySelection();
+        else if (action === 'paste') store.pasteSelection();
         else if (action === 'undo') store.undo();
         else if (action === 'redo') store.redo();
         else if (action === 'selectAll') store.selectAll();

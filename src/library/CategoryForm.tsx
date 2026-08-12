@@ -71,26 +71,29 @@ export function CategorySection({ familyId, editMode }: { familyId: string; edit
           <li key={c.id}>
             <div className="library-list-row">
               <button className="library-list-name" onClick={() => setExpandedId(expandedId === c.id ? null : c.id)}>
-                {c.name} <span className="library-muted">({c.portCount} port{c.portCount === 1 ? '' : 's'})</span>
+                {c.name}
               </button>
-              <button onClick={() => armComponent(c.id, null)} title="Place this category's symbol (no specific part assigned)">
-                Place
-              </button>
-              {/* Not gated behind editMode: editing a drawing is non-destructive (it
-                  overwrites only this category's own symbol row), unlike Delete. Icon
-                  instead of the full "Edit Drawing" label — that was the single biggest
-                  contributor to this row overflowing the (fixed-width) library panel. */}
-              <button
-                className="library-icon-button"
-                onClick={() => setSymbolEditorFor(c)}
-                title="Edit Drawing — draw or upload this category's symbol and mark its connection ports"
-              >
-                ✎
-              </button>
-              {editMode && (
-                <button className="library-icon-button library-icon-button--danger" onClick={() => void removeCategory(c.id, c.name)} title="Delete category">
-                  🗑
+              {/* Browsing mode: just Place. Edit mode swaps that for the two editing
+                  actions (Edit Drawing, Delete) — keeping both sets mutually exclusive
+                  is what the Edit toggle is for, and it halves how much is on each row. */}
+              {!editMode && (
+                <button onClick={() => armComponent(c.id, null)} title="Place this category's symbol (no specific part assigned)">
+                  Place
                 </button>
+              )}
+              {editMode && (
+                <>
+                  <button
+                    className="library-icon-button"
+                    onClick={() => setSymbolEditorFor(c)}
+                    title="Edit Drawing — draw or upload this category's symbol and mark its connection ports"
+                  >
+                    ✎
+                  </button>
+                  <button className="library-icon-button library-icon-button--danger" onClick={() => void removeCategory(c.id, c.name)} title="Delete category">
+                    🗑
+                  </button>
+                </>
               )}
             </div>
             {expandedId === c.id && <AttributeDefinitionsEditor categoryId={c.id} editMode={editMode} />}

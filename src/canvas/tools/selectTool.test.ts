@@ -26,7 +26,7 @@ describe('multi-component group drag (regression: copy/paste then dragging used 
     placeComponent({ categoryId: 'cat1', realPartId: null, position: { x: 50, y: 0 }, tag: 'V-102', snapshot: sampleSnapshot() });
     const id2 = [...useSketchStore.getState().selection.componentIds][0];
 
-    // Simulate "select both" (what copySelectedComponents/pasteComponents leaves behind).
+    // Simulate "select both" (what copySelection/pasteSelection leaves behind).
     useSketchStore.setState((s) => ({ selection: { ...s.selection, componentIds: new Set([id1, id2]) } }));
 
     const ctx = newCtx();
