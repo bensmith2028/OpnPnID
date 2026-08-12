@@ -47,13 +47,17 @@ function hitTestEdge(world: Vec2, threshold: number): EdgeHit | null {
  * symbol's points, transformed by its rotation) — lets you grab a component anywhere on
  * its symbol, not just exactly on one of its ports. */
 function hitTestComponent(world: Vec2, threshold: number): ComponentInstance | null {
-  const { graph } = useSketchStore.getState();
+  const { graph, componentScale } = useSketchStore.getState();
   let best: { instance: ComponentInstance; distance: number } | null = null;
   for (const instance of graph.components.values()) {
+    // Undo scale as well as rotation so the bounds (in un-scaled symbol-local units)
+    // compare correctly regardless of the current global component-size setting.
     const local = rotate(subtract(world, instance.position), -instance.rotation);
+    const localUnscaled = { x: local.x / componentScale, y: local.y / componentScale };
+    const scaledThreshold = threshold / componentScale;
     const bounds = symbolLocalBounds(instance.snapshot.symbol);
-    if (local.x < bounds.minX - threshold || local.x > bounds.maxX + threshold) continue;
-    if (local.y < bounds.minY - threshold || local.y > bounds.maxY + threshold) continue;
+    if (localUnscaled.x < bounds.minX - scaledThreshold || localUnscaled.x > bounds.maxX + scaledThreshold) continue;
+    if (localUnscaled.y < bounds.minY - scaledThreshold || localUnscaled.y > bounds.maxY + scaledThreshold) continue;
     const d = distance(world, instance.position);
     if (!best || d < best.distance) best = { instance, distance: d };
   }
@@ -209,7 +213,17 @@ export function selectOnPointerMove(world: Vec2, ctx: ToolCtx) {
   } else if (drag.kind === 'component') {
     const dx = world.x - drag.grabWorld.x;
     const dy = world.y - drag.grabWorld.y;
-    graph.moveComponent(drag.componentId, { x: drag.originPosition.x + dx, y: drag.originPosition.y + dy }, drag.rotation);
+    const target = { x: drag.originPosition.x + dx, y: drag.originPosition.y + dy };
+    const snap = computeSnap({
+      cursor: target,
+      graph,
+      threshold: worldThreshold(),
+      gridSize,
+      disabled: ctx.interaction.altHeld,
+      excludeComponentId: drag.componentId,
+    });
+    graph.moveComponent(drag.componentId, snap.point, drag.rotation, useSketchStore.getState().componentScale);
+    ctx.interaction.hoverSnap = snap;
     bumpVersion();
     ctx.requestRedraw();
   } else if (drag.kind === 'marquee') {

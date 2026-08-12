@@ -357,10 +357,13 @@ export class SceneGraph {
     this.enforceAllTangents();
   }
 
-  nearestPoint(p: Vec2, excludeId?: Id): { point: Point; distance: number } | null {
+  /** `excludeComponentId` skips every point owned by that component (its own ports) —
+   * used while dragging a component so it doesn't "snap" to itself. */
+  nearestPoint(p: Vec2, excludeId?: Id, excludeComponentId?: Id): { point: Point; distance: number } | null {
     let best: { point: Point; distance: number } | null = null;
     for (const point of this.points.values()) {
       if (point.id === excludeId) continue;
+      if (excludeComponentId && this.pointOwner.get(point.id) === excludeComponentId) continue;
       const d = distance(p, point);
       if (!best || d < best.distance) best = { point, distance: d };
     }
@@ -483,12 +486,15 @@ export class SceneGraph {
     rotation: number;
     snapshot: ComponentSnapshot;
     id?: Id;
+    /** Global component-size multiplier in effect at placement time — see moveComponent. */
+    scaleFactor?: number;
   }): ComponentInstance {
     const id = params.id ?? nextId('cmp');
+    const factor = params.scaleFactor ?? 1;
     const { symbol } = params.snapshot;
     const connections = symbol.ports.map((localId) => {
       const local = symbol.points[localId];
-      const world = add(params.position, rotate(local, params.rotation));
+      const world = add(params.position, rotate(scale(local, factor), params.rotation));
       const point = this.addPoint(world.x, world.y);
       this.pointOwner.set(point.id, id);
       return { localId, pointId: point.id };
@@ -507,11 +513,16 @@ export class SceneGraph {
     return instance;
   }
 
-  /** Moves/rotates a component instance as a rigid unit: recomputes each port's world
-   * position from the new transform and runs it through movePoint, so any pipes attached
-   * to those ports follow via the propagation that already exists — no separate drag
-   * logic needed for "component connected to a pipe" vs. any other connected point. */
-  moveComponent(id: Id, position: Vec2, rotation: number) {
+  /** Moves/rotates/rescales a component instance as a rigid unit: recomputes each port's
+   * world position from the new transform and runs it through movePoint, so any pipes
+   * attached to those ports follow via the propagation that already exists — no separate
+   * drag logic needed for "component connected to a pipe" vs. any other connected point.
+   * `scaleFactor` defaults to 1 for callers that only mean to move/rotate; the global
+   * component-scale setting passes its current value through on every call (including a
+   * plain drag) so an instance always reflects the live scale, and the store's
+   * `setComponentScale` action can rescale every placed instance in one pass by simply
+   * re-calling this with each instance's *existing* position/rotation and the new scale. */
+  moveComponent(id: Id, position: Vec2, rotation: number, scaleFactor = 1) {
     const instance = this.components.get(id);
     if (!instance) return;
     instance.position = { ...position };
@@ -519,7 +530,7 @@ export class SceneGraph {
     const { symbol } = instance.snapshot;
     for (const conn of instance.connections) {
       const local = symbol.points[conn.localId] ?? { x: 0, y: 0 };
-      const world = add(position, rotate(local, rotation));
+      const world = add(position, rotate(scale(local, scaleFactor), rotation));
       this.movePoint(conn.pointId, world.x, world.y);
     }
   }

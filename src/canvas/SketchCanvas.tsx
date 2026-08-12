@@ -27,6 +27,7 @@ export function SketchCanvas() {
   const gridSize = useSketchStore((s) => s.gridSize);
   const gridVisible = useSketchStore((s) => s.gridVisible);
   const theme = useSketchStore((s) => s.theme);
+  const componentScale = useSketchStore((s) => s.componentScale);
 
   const redraw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -43,6 +44,7 @@ export function SketchCanvas() {
       gridVisible: state.gridVisible,
       interaction: interactionRef.current,
       theme: state.theme,
+      componentScale: state.componentScale,
     });
   }, []);
 
@@ -83,7 +85,7 @@ export function SketchCanvas() {
   // properties-panel edits, tool switch, pan/zoom).
   useEffect(() => {
     requestRedraw();
-  }, [version, selection, activeTool, camera, gridSize, gridVisible, theme, requestRedraw]);
+  }, [version, selection, activeTool, camera, gridSize, gridVisible, theme, componentScale, requestRedraw]);
 
   // Cancel any in-progress line/arc/circle gesture when switching away from that tool.
   useEffect(() => {

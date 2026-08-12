@@ -73,14 +73,17 @@ function GridControls() {
   const gridSize = useSketchStore((s) => s.gridSize);
   const gridVisible = useSketchStore((s) => s.gridVisible);
   const snapThresholdPx = useSketchStore((s) => s.snapThresholdPx);
+  const componentScale = useSketchStore((s) => s.componentScale);
   const setGridSize = useSketchStore((s) => s.setGridSize);
   const setGridVisible = useSketchStore((s) => s.setGridVisible);
   const setSnapThresholdPx = useSketchStore((s) => s.setSnapThresholdPx);
+  const setComponentScale = useSketchStore((s) => s.setComponentScale);
 
   // Local text buffers so partial/invalid typing (e.g. a bare "-") doesn't get clobbered
   // by the store's clamped value on every keystroke.
   const [gridText, setGridText] = useState(String(gridSize));
   const [snapText, setSnapText] = useState(String(snapThresholdPx));
+  const [scaleText, setScaleText] = useState(String(componentScale));
 
   const commitGrid = () => {
     const value = parseFloat(gridText);
@@ -92,6 +95,12 @@ function GridControls() {
     const value = parseFloat(snapText);
     if (Number.isFinite(value) && value >= 0) setSnapThresholdPx(value);
     else setSnapText(String(snapThresholdPx));
+  };
+
+  const commitScale = () => {
+    const value = parseFloat(scaleText);
+    if (Number.isFinite(value) && value > 0) setComponentScale(value);
+    else setScaleText(String(componentScale));
   };
 
   const onEnter = (commit: () => void) => (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -123,6 +132,18 @@ function GridControls() {
           onChange={(e) => setSnapText(e.target.value)}
           onBlur={commitSnap}
           onKeyDown={onEnter(commitSnap)}
+        />
+      </label>
+      <label title="Global size multiplier applied to every placed component's symbol (1 = normal size)">
+        Component scale
+        <input
+          type="number"
+          step="any"
+          min="0.1"
+          value={scaleText}
+          onChange={(e) => setScaleText(e.target.value)}
+          onBlur={commitScale}
+          onKeyDown={onEnter(commitScale)}
         />
       </label>
       <label className="grid-visible-toggle">

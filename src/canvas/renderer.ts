@@ -82,10 +82,12 @@ export interface RenderParams {
   gridVisible: boolean;
   interaction: InteractionState;
   theme: Theme;
+  /** Global component-size multiplier — see useSketchStore's componentScale. */
+  componentScale: number;
 }
 
 export function render(params: RenderParams) {
-  const { ctx, size, camera, graph, selection, gridSize, gridVisible, interaction, theme } = params;
+  const { ctx, size, camera, graph, selection, gridSize, gridVisible, interaction, theme, componentScale } = params;
   const colors = paletteFor(theme);
   const dpr = window.devicePixelRatio || 1;
 
@@ -126,7 +128,7 @@ export function render(params: RenderParams) {
   }
 
   for (const instance of graph.components.values()) {
-    drawComponentBody(ctx, instance, camera, size, colors, selection.componentIds.has(instance.id));
+    drawComponentBody(ctx, instance, camera, size, colors, selection.componentIds.has(instance.id), componentScale);
   }
 
   for (const point of graph.points.values()) {
@@ -140,7 +142,7 @@ export function render(params: RenderParams) {
 
   // Tags render last (on top of everything) so they stay legible over overlapping geometry.
   for (const instance of graph.components.values()) {
-    drawComponentTag(ctx, instance, camera, size, colors, selection.componentIds.has(instance.id));
+    drawComponentTag(ctx, instance, camera, size, colors, selection.componentIds.has(instance.id), componentScale);
   }
 
   if (interaction.drawLine) {
@@ -281,17 +283,26 @@ function drawGrid(ctx: CanvasRenderingContext2D, size: CanvasSize, camera: Camer
   ctx.stroke();
 }
 
-/** Transforms a symbol-local point into world space by the instance's position and
- * rotation — the same transform SceneGraph uses when it derives port world-positions,
- * kept in sync so the drawn body lines up exactly with where pipes attach. */
-function symbolPointToWorld(local: Vec2, instance: ComponentInstance): Vec2 {
-  return add(instance.position, rotate(local, instance.rotation));
+/** Transforms a symbol-local point into world space by the instance's position,
+ * rotation, and the global component-scale factor — the same transform SceneGraph uses
+ * when it derives port world-positions, kept in sync so the drawn body lines up exactly
+ * with where pipes attach. */
+function symbolPointToWorld(local: Vec2, instance: ComponentInstance, componentScale: number): Vec2 {
+  return add(instance.position, rotate({ x: local.x * componentScale, y: local.y * componentScale }, instance.rotation));
 }
 
 /** Draws the instance's real vector symbol (or the generic placeholder, resolved the
  * same way — see builtinSymbols.ts) by transforming its local points/lines/arcs into
  * world space and reusing the same line/arc stroking as the sketch geometry itself. */
-function drawComponentBody(ctx: CanvasRenderingContext2D, instance: ComponentInstance, camera: CameraState, size: CanvasSize, colors: Palette, selected: boolean) {
+function drawComponentBody(
+  ctx: CanvasRenderingContext2D,
+  instance: ComponentInstance,
+  camera: CameraState,
+  size: CanvasSize,
+  colors: Palette,
+  selected: boolean,
+  componentScale: number,
+) {
   const { symbol } = instance.snapshot;
   ctx.strokeStyle = selected ? colors.lineSelected : colors.line;
   ctx.lineWidth = selected ? 2.5 : 2;
@@ -300,8 +311,8 @@ function drawComponentBody(ctx: CanvasRenderingContext2D, instance: ComponentIns
     const aLocal = symbol.points[aId];
     const bLocal = symbol.points[bId];
     if (!aLocal || !bLocal) continue;
-    const sa = worldToScreen(symbolPointToWorld(aLocal, instance), camera, size);
-    const sb = worldToScreen(symbolPointToWorld(bLocal, instance), camera, size);
+    const sa = worldToScreen(symbolPointToWorld(aLocal, instance, componentScale), camera, size);
+    const sb = worldToScreen(symbolPointToWorld(bLocal, instance, componentScale), camera, size);
     ctx.beginPath();
     ctx.moveTo(sa.x, sa.y);
     ctx.lineTo(sb.x, sb.y);
@@ -312,15 +323,23 @@ function drawComponentBody(ctx: CanvasRenderingContext2D, instance: ComponentIns
     const aLocal = symbol.points[arc.a];
     const bLocal = symbol.points[arc.b];
     if (!aLocal || !bLocal) continue;
-    const aWorld = symbolPointToWorld(aLocal, instance);
-    const bWorld = symbolPointToWorld(bLocal, instance);
+    const aWorld = symbolPointToWorld(aLocal, instance, componentScale);
+    const bWorld = symbolPointToWorld(bLocal, instance, componentScale);
     strokeArc(ctx, arcGeometry(aWorld, bWorld, arc.bulge), aWorld, bWorld, camera, size);
   }
 }
 
-function drawComponentTag(ctx: CanvasRenderingContext2D, instance: ComponentInstance, camera: CameraState, size: CanvasSize, colors: Palette, selected: boolean) {
+function drawComponentTag(
+  ctx: CanvasRenderingContext2D,
+  instance: ComponentInstance,
+  camera: CameraState,
+  size: CanvasSize,
+  colors: Palette,
+  selected: boolean,
+  componentScale: number,
+) {
   const center = worldToScreen(instance.position, camera, size);
-  const offset = symbolBoundingRadius(instance.snapshot.symbol) * camera.zoom + 6;
+  const offset = symbolBoundingRadius(instance.snapshot.symbol) * componentScale * camera.zoom + 6;
   ctx.fillStyle = selected ? colors.lineSelected : colors.componentTag;
   ctx.font = '11px sans-serif';
   ctx.textAlign = 'center';

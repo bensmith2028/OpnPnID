@@ -446,6 +446,38 @@ describe('SceneGraph components', () => {
     expect(p1.y).toBeCloseTo(12);
   });
 
+  it('addComponent scales the port layout by scaleFactor (global component-scale setting)', () => {
+    const g = new SceneGraph();
+    const instance = g.addComponent({
+      categoryId: 'gc1',
+      realPartId: null,
+      tag: 'V-102b',
+      position: { x: 100, y: 50 },
+      rotation: 0,
+      snapshot: sampleSnapshot(2),
+      scaleFactor: 2,
+    });
+    const [p0, p1] = instance.connections.map((c) => g.points.get(c.pointId)!);
+    expect(p0).toMatchObject({ x: 76, y: 50 }); // 100 + 2*(-12, 0)
+    expect(p1).toMatchObject({ x: 124, y: 50 }); // 100 + 2*(12, 0)
+  });
+
+  it('moveComponent with a new scaleFactor rescales ports in place at the same position/rotation', () => {
+    const g = new SceneGraph();
+    const instance = g.addComponent({
+      categoryId: 'gc1',
+      realPartId: null,
+      tag: 'V-102c',
+      position: { x: 0, y: 0 },
+      rotation: 0,
+      snapshot: sampleSnapshot(2),
+    });
+    g.moveComponent(instance.id, instance.position, instance.rotation, 0.5);
+    const [p0, p1] = instance.connections.map((c) => g.points.get(c.pointId)!);
+    expect(p0).toMatchObject({ x: -6, y: 0 }); // 0.5 * (-12, 0)
+    expect(p1).toMatchObject({ x: 6, y: 0 }); // 0.5 * (12, 0)
+  });
+
   it('moveComponent relocates every port; an attached pipe follows via movePoint', () => {
     const g = new SceneGraph();
     const instance = g.addComponent({
@@ -538,6 +570,23 @@ describe('SceneGraph components', () => {
     expect(g.points.has(dragged.id)).toBe(false);
     expect(g.lines.get(line.id)!.startId).toBe(portId);
     expect(g.componentOwning(portId)).toBe(instance.id);
+  });
+
+  it('nearestPoint excludeComponentId skips a component\'s own ports (so dragging it never "snaps" to itself)', () => {
+    const g = new SceneGraph();
+    const instance = g.addComponent({
+      categoryId: 'gc1',
+      realPartId: null,
+      tag: 'V-107b',
+      position: { x: 0, y: 0 },
+      rotation: 0,
+      snapshot: sampleSnapshot(2),
+    });
+    const far = g.addPoint(1000, 1000);
+    // Without the exclusion, the nearest point to (0,0) is one of the component's own
+    // ports (distance 12); with it, only the unrelated far-away point is a candidate.
+    const nearest = g.nearestPoint({ x: 0, y: 0 }, undefined, instance.id);
+    expect(nearest!.point.id).toBe(far.id);
   });
 
   it('filletAtPoint refuses a component-owned point even with exactly two lines attached', () => {

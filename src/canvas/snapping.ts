@@ -24,6 +24,9 @@ export interface SnapOptions {
   originPoint?: Vec2;
   /** Exclude this point from endpoint-snap candidates (e.g. the point currently being dragged). */
   excludePointId?: Id;
+  /** Exclude every point owned by this component (its own ports) — used while dragging a
+   * component so it doesn't snap to its own connection points. */
+  excludeComponentId?: Id;
   /** Holding a modifier (Alt) disables all snapping for a fully freehand placement. */
   disabled?: boolean;
 }
@@ -33,13 +36,13 @@ export interface SnapOptions {
  * endpoint > axis inference (H/V off the origin point) > grid > free (raw cursor).
  */
 export function computeSnap(opts: SnapOptions): SnapResult {
-  const { cursor, graph, threshold, gridSize, originPoint, excludePointId, disabled } = opts;
+  const { cursor, graph, threshold, gridSize, originPoint, excludePointId, excludeComponentId, disabled } = opts;
 
   if (disabled) {
     return { point: cursor, type: 'free' };
   }
 
-  const nearest = graph.nearestPoint(cursor, excludePointId);
+  const nearest = graph.nearestPoint(cursor, excludePointId, excludeComponentId);
   if (nearest && nearest.distance <= threshold) {
     return { point: { x: nearest.point.x, y: nearest.point.y }, type: 'endpoint', snappedPointId: nearest.point.id };
   }

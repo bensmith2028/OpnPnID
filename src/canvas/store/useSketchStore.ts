@@ -55,6 +55,11 @@ interface SketchStoreState {
   gridSize: number;
   gridVisible: boolean;
   snapThresholdPx: number;
+  /** Global multiplier applied to every placed component's symbol size (and thus its
+   * ports' world positions) — one dial for "make all components bigger/smaller" rather
+   * than a per-instance setting. Changing it re-lays-out every already-placed instance's
+   * ports in place (see setComponentScale), so attached pipes follow immediately. */
+  componentScale: number;
   theme: Theme;
   armedComponent: ArmedComponent | null;
   /** Whether the Library panel is shown (replaces the Properties Panel in the same
@@ -78,6 +83,9 @@ interface SketchStoreState {
   setGridSize: (size: number) => void;
   setGridVisible: (visible: boolean) => void;
   setSnapThresholdPx: (px: number) => void;
+  /** Sets the global component-size multiplier and immediately re-lays-out every placed
+   * component's ports at the new scale (see SceneGraph.moveComponent's scaleFactor). */
+  setComponentScale: (scale: number) => void;
   /** Call after mutating `graph` in place, to trigger reactive redraws (no history push). */
   bumpVersion: () => void;
   /**
@@ -126,6 +134,7 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
   gridSize: 20,
   gridVisible: true,
   snapThresholdPx: DEFAULT_SNAP_THRESHOLD_PX,
+  componentScale: 1,
   theme: loadInitialTheme(),
   armedComponent: null,
   libraryPanelOpen: false,
@@ -149,6 +158,17 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
   setGridSize: (size) => set({ gridSize: Math.max(0.1, size) }),
   setGridVisible: (visible) => set({ gridVisible: visible }),
   setSnapThresholdPx: (px) => set({ snapThresholdPx: Math.max(0, px) }),
+
+  setComponentScale: (rawScale) => {
+    const scale = Math.max(0.1, rawScale);
+    const { graph } = get();
+    const before = graph.toJSON();
+    for (const instance of graph.components.values()) {
+      graph.moveComponent(instance.id, instance.position, instance.rotation, scale);
+    }
+    set({ componentScale: scale });
+    get().commit(before);
+  },
 
   bumpVersion: () => set((s) => ({ version: s.version + 1, dirty: true })),
 
@@ -264,9 +284,9 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
   },
 
   placeComponent: ({ categoryId, realPartId, position, tag, snapshot }) => {
-    const { graph } = get();
+    const { graph, componentScale } = get();
     const before = graph.toJSON();
-    const instance = graph.addComponent({ categoryId, realPartId, tag, position, rotation: 0, snapshot });
+    const instance = graph.addComponent({ categoryId, realPartId, tag, position, rotation: 0, snapshot, scaleFactor: componentScale });
     set({ selection: { pointIds: new Set(), lineIds: new Set(), arcIds: new Set(), componentIds: new Set([instance.id]) } });
     get().commit(before);
   },
@@ -278,11 +298,11 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
   },
 
   setComponentRotationDeg: (componentId, degrees) => {
-    const { graph } = get();
+    const { graph, componentScale } = get();
     const instance = graph.components.get(componentId);
     if (!instance) return;
     const before = graph.toJSON();
-    graph.moveComponent(componentId, instance.position, (degrees * Math.PI) / 180);
+    graph.moveComponent(componentId, instance.position, (degrees * Math.PI) / 180, componentScale);
     get().commit(before);
   },
 
