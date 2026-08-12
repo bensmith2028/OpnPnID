@@ -61,7 +61,20 @@ export type DragState =
       rotation: number;
       before: SceneGraphJSON;
     }
-  | { kind: 'marquee'; originWorld: Vec2; currentWorld: Vec2; additive: boolean };
+  | { kind: 'marquee'; originWorld: Vec2; currentWorld: Vec2; additive: boolean }
+  /** Rigid-translate drag of an entire multi-item selection (e.g. a just-pasted batch of
+   * components) — started when the pointer goes down on something already part of a
+   * selection with more than one item, instead of the usual "click replaces selection
+   * with just this one thing" behavior. Grid-quantizes the whole-group delta rather than
+   * doing a per-point endpoint-snap search, which doesn't generalize to multiple
+   * simultaneously-moving anchors — same tradeoff as the symbol editor's group drag. */
+  | {
+      kind: 'group';
+      grabWorld: Vec2;
+      pointOrigins: Map<Id, Vec2>;
+      componentOrigins: Map<Id, { position: Vec2; rotation: number }>;
+      before: SceneGraphJSON;
+    };
 
 export interface PanState {
   originScreen: Vec2;

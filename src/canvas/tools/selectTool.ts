@@ -1,10 +1,63 @@
 import { symbolLocalBounds } from '../../library/builtinSymbols';
-import type { Arc, ComponentInstance, Id, Line, Vec2 } from '../../types/geometry';
-import { distance, projectPointOnArc, projectPointOnSegment, rotate, subtract } from '../geometry';
+import type { Arc, ComponentInstance, Id, Line, Selection, Vec2 } from '../../types/geometry';
+import { distance, nearestGridPoint, projectPointOnArc, projectPointOnSegment, rotate, subtract } from '../geometry';
+import type { SceneGraph } from '../sceneGraph';
 import { computeSnap } from '../snapping';
 import { useSketchStore } from '../store/useSketchStore';
 import type { ToolCtx } from './drawLineTool';
 import { worldThreshold } from './drawLineTool';
+
+/** Total item count across all four selection sets — used to tell "one thing selected"
+ * (the usual click-replaces-selection-and-drag-just-that behavior) from "part of a bigger
+ * selection" (click-and-drag should move the whole group instead). */
+function selectionSize(selection: Selection): number {
+  return selection.pointIds.size + selection.lineIds.size + selection.arcIds.size + selection.componentIds.size;
+}
+
+/** All point ids a group drag should move directly: every selected point, plus the
+ * endpoints of every selected line/arc. Excludes anything owned by a component (a
+ * connection port) — those move only via their owning component's `moveComponent`, which
+ * is handled separately so a port doesn't get moved twice or torn from its component. */
+function groupPointIds(selection: Selection, graph: SceneGraph): Set<Id> {
+  const ids = new Set<Id>(selection.pointIds);
+  for (const lineId of selection.lineIds) {
+    const line = graph.lines.get(lineId);
+    if (line) {
+      ids.add(line.startId);
+      ids.add(line.endId);
+    }
+  }
+  for (const arcId of selection.arcIds) {
+    const arc = graph.arcs.get(arcId);
+    if (arc) {
+      ids.add(arc.startId);
+      ids.add(arc.endId);
+    }
+  }
+  for (const id of ids) if (graph.componentOwning(id)) ids.delete(id);
+  return ids;
+}
+
+/** Snapshots the current selection's points/components and starts a rigid group drag —
+ * used instead of the usual single-item drag when the pointer went down on something
+ * already part of a multi-item selection. Leaves the selection itself untouched. */
+function startGroupDrag(world: Vec2, ctx: ToolCtx) {
+  const { selection, graph } = useSketchStore.getState();
+
+  const pointOrigins = new Map<Id, Vec2>();
+  for (const id of groupPointIds(selection, graph)) {
+    const p = graph.points.get(id);
+    if (p) pointOrigins.set(id, { x: p.x, y: p.y });
+  }
+
+  const componentOrigins = new Map<Id, { position: Vec2; rotation: number }>();
+  for (const id of selection.componentIds) {
+    const c = graph.components.get(id);
+    if (c) componentOrigins.set(id, { position: { x: c.position.x, y: c.position.y }, rotation: c.rotation });
+  }
+
+  ctx.interaction.drag = { kind: 'group', grabWorld: world, pointOrigins, componentOrigins, before: graph.toJSON() };
+}
 
 function hitTestPoint(world: Vec2, threshold: number) {
   const { graph } = useSketchStore.getState();
@@ -86,6 +139,14 @@ export function selectOnPointerDown(world: Vec2, additive: boolean, ctx: ToolCtx
   // A component's connection port is a real point, but clicking it should move the whole
   // component (see SceneGraph's pointOwner doc) rather than dragging the port alone.
   if (point && !ownerComponentId) {
+    // Clicking something already part of a bigger selection (e.g. a just-pasted batch of
+    // components, or a marquee-selected group) drags the whole group as a rigid unit
+    // instead of collapsing the selection down to just this one point.
+    if (!additive && selection.pointIds.has(point.id) && selectionSize(selection) > 1) {
+      startGroupDrag(world, ctx);
+      ctx.requestRedraw();
+      return;
+    }
     const pointIds = new Set(additive ? selection.pointIds : []);
     if (additive && pointIds.has(point.id)) pointIds.delete(point.id);
     else pointIds.add(point.id);
@@ -102,6 +163,14 @@ export function selectOnPointerDown(world: Vec2, additive: boolean, ctx: ToolCtx
 
   const component = ownerComponentId ? graph.components.get(ownerComponentId) : hitTestComponent(world, threshold);
   if (component) {
+    // Same "drag the whole group" carve-out as above — this is the common case right
+    // after a multi-component paste, where the pasted batch is selected and the user just
+    // wants to drag it into place.
+    if (!additive && selection.componentIds.has(component.id) && selectionSize(selection) > 1) {
+      startGroupDrag(world, ctx);
+      ctx.requestRedraw();
+      return;
+    }
     const componentIds = new Set(additive ? selection.componentIds : []);
     if (additive && componentIds.has(component.id)) componentIds.delete(component.id);
     else componentIds.add(component.id);
@@ -127,6 +196,11 @@ export function selectOnPointerDown(world: Vec2, additive: boolean, ctx: ToolCtx
   if (hit) {
     if (hit.kind === 'line') {
       const { line } = hit;
+      if (!additive && selection.lineIds.has(line.id) && selectionSize(selection) > 1) {
+        startGroupDrag(world, ctx);
+        ctx.requestRedraw();
+        return;
+      }
       const lineIds = new Set(additive ? selection.lineIds : []);
       if (additive && lineIds.has(line.id)) lineIds.delete(line.id);
       else lineIds.add(line.id);
@@ -153,6 +227,11 @@ export function selectOnPointerDown(world: Vec2, additive: boolean, ctx: ToolCtx
       }
     } else {
       const { arc } = hit;
+      if (!additive && selection.arcIds.has(arc.id) && selectionSize(selection) > 1) {
+        startGroupDrag(world, ctx);
+        ctx.requestRedraw();
+        return;
+      }
       const arcIds = new Set(additive ? selection.arcIds : []);
       if (additive && arcIds.has(arc.id)) arcIds.delete(arc.id);
       else arcIds.add(arc.id);
@@ -228,6 +307,20 @@ export function selectOnPointerMove(world: Vec2, ctx: ToolCtx) {
     ctx.interaction.hoverSnap = snap;
     bumpVersion();
     ctx.requestRedraw();
+  } else if (drag.kind === 'group') {
+    const rawDx = world.x - drag.grabWorld.x;
+    const rawDy = world.y - drag.grabWorld.y;
+    // No per-point endpoint-snap search here — with several points/components moving at
+    // once there's no single anchor to search against, so (grid-permitting) the whole
+    // group's delta is just quantized to the grid instead, same tradeoff as the symbol
+    // editor's group drag.
+    const delta = ctx.interaction.altHeld ? { x: rawDx, y: rawDy } : nearestGridPoint({ x: rawDx, y: rawDy }, gridSize);
+    for (const [id, origin] of drag.pointOrigins) graph.movePoint(id, origin.x + delta.x, origin.y + delta.y);
+    for (const [id, origin] of drag.componentOrigins) {
+      graph.moveComponent(id, { x: origin.position.x + delta.x, y: origin.position.y + delta.y }, origin.rotation, useSketchStore.getState().componentScale);
+    }
+    bumpVersion();
+    ctx.requestRedraw();
   } else if (drag.kind === 'marquee') {
     ctx.interaction.drag = { ...drag, currentWorld: world };
     ctx.requestRedraw();
@@ -244,7 +337,7 @@ export function selectOnPointerUp(ctx: ToolCtx) {
     const after = graph.toJSON();
     if (JSON.stringify(after) !== JSON.stringify(drag.before)) commit(drag.before);
     ctx.interaction.hoverSnap = null;
-  } else if (drag.kind === 'line' || drag.kind === 'arc' || drag.kind === 'component') {
+  } else if (drag.kind === 'line' || drag.kind === 'arc' || drag.kind === 'component' || drag.kind === 'group') {
     const after = graph.toJSON();
     if (JSON.stringify(after) !== JSON.stringify(drag.before)) commit(drag.before);
   } else if (drag.kind === 'marquee') {
