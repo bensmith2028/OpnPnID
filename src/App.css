@@ -581,3 +581,125 @@ body {
   letter-spacing: normal;
   color: var(--text);
 }
+
+/* ---------------------------------------------------------------------------------
+   Symbol editor — modal for drawing/uploading one category's symbol
+   --------------------------------------------------------------------------------- */
+
+/* Wider than the default modal so the fixed 480px symbol canvas fits with padding. */
+.symbol-editor {
+  width: 528px;
+}
+
+.symbol-editor .library-header {
+  margin-bottom: 12px;
+}
+
+.symbol-editor .library-header h3 {
+  text-transform: none;
+  font-size: 15px;
+  letter-spacing: normal;
+  color: var(--text);
+}
+
+.symbol-editor p.library-muted {
+  margin: 6px 0 0;
+}
+
+.symbol-editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.symbol-editor-toolbar-gap {
+  flex: 1;
+}
+
+.symbol-editor-toolbar button {
+  background: var(--bg-button);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 9px;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.symbol-editor-toolbar button:hover:not(:disabled) {
+  background: var(--bg-button-hover);
+}
+
+.symbol-editor-toolbar button.active {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: var(--accent);
+}
+
+.symbol-editor-toolbar button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.symbol-editor-canvas {
+  display: block;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.symbol-editor-size-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.symbol-editor-size-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.symbol-editor-size-row input[type='number'] {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  padding: 5px 6px;
+  font-size: 12px;
+  width: 90px;
+}
+
+.symbol-editor-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.symbol-editor-footer button {
+  background: var(--bg-button);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.symbol-editor-footer .symbol-editor-save {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: var(--accent);
+}
+
+.symbol-editor-footer button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

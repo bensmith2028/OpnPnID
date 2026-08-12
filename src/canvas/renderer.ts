@@ -84,10 +84,14 @@ export interface RenderParams {
   theme: Theme;
   /** Global component-size multiplier — see useSketchStore's componentScale. */
   componentScale: number;
+  /** Asks the host for another frame. Decoding an uploaded symbol image is asynchronous,
+   * so the frame that first encounters one has nothing to draw yet and needs a way to say
+   * "come back once it's ready" — the renderer has no access to the store on its own. */
+  requestRedraw?: () => void;
 }
 
 export function render(params: RenderParams) {
-  const { ctx, size, camera, graph, selection, gridSize, gridVisible, interaction, theme, componentScale } = params;
+  const { ctx, size, camera, graph, selection, gridSize, gridVisible, interaction, theme, componentScale, requestRedraw } = params;
   const colors = paletteFor(theme);
   const dpr = window.devicePixelRatio || 1;
 
@@ -128,7 +132,7 @@ export function render(params: RenderParams) {
   }
 
   for (const instance of graph.components.values()) {
-    drawComponentBody(ctx, instance, camera, size, colors, selection.componentIds.has(instance.id), componentScale);
+    drawComponentBody(ctx, instance, camera, size, colors, selection.componentIds.has(instance.id), componentScale, requestRedraw);
   }
 
   for (const point of graph.points.values()) {
@@ -291,9 +295,31 @@ function symbolPointToWorld(local: Vec2, instance: ComponentInstance, componentS
   return add(instance.position, rotate({ x: local.x * componentScale, y: local.y * componentScale }, instance.rotation));
 }
 
+/**
+ * Decoded symbol images, keyed by their data URL. `drawImage` needs a decoded
+ * HTMLImageElement rather than a URL string, and decoding is asynchronous, so the first
+ * frame that meets a given image starts the decode, draws nothing, and asks for another
+ * frame from `onload`. Module-level (not per-render) because the same uploaded symbol is
+ * typically shared by every placed instance of its category, and re-decoding it every
+ * frame would be pointless work.
+ */
+const imageCache = new Map<string, HTMLImageElement>();
+
+function decodedSymbolImage(dataUrl: string, requestRedraw?: () => void): HTMLImageElement | null {
+  let img = imageCache.get(dataUrl);
+  if (!img) {
+    img = new Image();
+    img.onload = () => requestRedraw?.();
+    img.src = dataUrl;
+    imageCache.set(dataUrl, img);
+  }
+  return img.complete && img.naturalWidth > 0 ? img : null;
+}
+
 /** Draws the instance's real vector symbol (or the generic placeholder, resolved the
  * same way — see builtinSymbols.ts) by transforming its local points/lines/arcs into
- * world space and reusing the same line/arc stroking as the sketch geometry itself. */
+ * world space and reusing the same line/arc stroking as the sketch geometry itself.
+ * An uploaded raster body (see SymbolImage) is drawn first, under any lines/arcs. */
 function drawComponentBody(
   ctx: CanvasRenderingContext2D,
   instance: ComponentInstance,
@@ -302,8 +328,27 @@ function drawComponentBody(
   colors: Palette,
   selected: boolean,
   componentScale: number,
+  requestRedraw?: () => void,
 ) {
   const { symbol } = instance.snapshot;
+
+  if (symbol.image) {
+    const img = decodedSymbolImage(symbol.image.dataUrl, requestRedraw);
+    if (img) {
+      // Same transform as symbolPointToWorld, but applied to the context instead of to
+      // individual points: a raster can only be rotated by rotating the canvas.
+      const center = worldToScreen(instance.position, camera, size);
+      const pxPerLocalUnit = componentScale * camera.zoom;
+      const w = symbol.image.width * pxPerLocalUnit;
+      const h = symbol.image.height * pxPerLocalUnit;
+      ctx.save();
+      ctx.translate(center.x, center.y);
+      ctx.rotate(instance.rotation);
+      ctx.drawImage(img, -w / 2, -h / 2, w, h);
+      ctx.restore();
+    }
+  }
+
   ctx.strokeStyle = selected ? colors.lineSelected : colors.line;
   ctx.lineWidth = selected ? 2.5 : 2;
 

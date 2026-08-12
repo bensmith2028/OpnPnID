@@ -29,6 +29,19 @@ export function SketchCanvas() {
   const theme = useSketchStore((s) => s.theme);
   const componentScale = useSketchStore((s) => s.componentScale);
 
+  // `render` is handed `requestRedraw` (so it can ask for another frame once an uploaded
+  // symbol image finishes decoding), and `requestRedraw` in turn calls `render` — the ref
+  // breaks that cycle without making either callback unstable.
+  const redrawRef = useRef<() => void>(() => {});
+
+  const requestRedraw = useCallback(() => {
+    if (rafRef.current != null) return;
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = null;
+      redrawRef.current();
+    });
+  }, []);
+
   const redraw = useCallback(() => {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext('2d');
@@ -45,16 +58,10 @@ export function SketchCanvas() {
       interaction: interactionRef.current,
       theme: state.theme,
       componentScale: state.componentScale,
+      requestRedraw,
     });
-  }, []);
-
-  const requestRedraw = useCallback(() => {
-    if (rafRef.current != null) return;
-    rafRef.current = requestAnimationFrame(() => {
-      rafRef.current = null;
-      redraw();
-    });
-  }, [redraw]);
+  }, [requestRedraw]);
+  redrawRef.current = redraw;
 
   const toolCtx: ToolCtx = { interaction: interactionRef.current, requestRedraw };
 
