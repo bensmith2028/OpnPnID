@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useSketchStore } from '../canvas/store/useSketchStore';
 import * as db from './db';
 import { describeError } from './errors';
+import { SymbolEditor } from './SymbolEditor';
 
 /** Category list + add form for one family. Each category is the fine-grained,
  * symbol-owning classification ("Automated 2-Way Valve") — expandable to show/manage
@@ -17,6 +18,8 @@ export function CategorySection({ familyId, editMode }: { familyId: string; edit
   const [actuation, setActuation] = useState('');
   const [portCount, setPortCount] = useState('2');
   const [error, setError] = useState<string | null>(null);
+  /** The category whose symbol is open in the drawing editor, if any. */
+  const [symbolEditorFor, setSymbolEditorFor] = useState<db.Category | null>(null);
 
   const armComponent = useSketchStore((s) => s.armComponent);
 
@@ -73,6 +76,11 @@ export function CategorySection({ familyId, editMode }: { familyId: string; edit
               <button onClick={() => armComponent(c.id, null)} title="Place this category's symbol (no specific part assigned)">
                 Place
               </button>
+              {/* Not gated behind editMode: editing a drawing is non-destructive (it
+                  overwrites only this category's own symbol row), unlike Delete. */}
+              <button onClick={() => setSymbolEditorFor(c)} title="Draw or upload this category's symbol and mark its connection ports">
+                Edit Drawing
+              </button>
               {editMode && <button onClick={() => void removeCategory(c.id, c.name)}>Delete</button>}
             </div>
             {expandedId === c.id && <AttributeDefinitionsEditor categoryId={c.id} editMode={editMode} />}
@@ -95,6 +103,15 @@ export function CategorySection({ familyId, editMode }: { familyId: string; edit
         <button onClick={() => void addCategory()}>Add Category</button>
       </div>
       {error && <p className="field-error">{error}</p>}
+      {symbolEditorFor && (
+        <SymbolEditor
+          category={symbolEditorFor}
+          onClose={() => setSymbolEditorFor(null)}
+          // Re-reads the list so the row reflects the category's new symbol_id (and any
+          // later re-open of the editor loads the saved symbol rather than the fallback).
+          onSaved={() => void refresh().catch((e: unknown) => setError(describeError(e)))}
+        />
+      )}
     </div>
   );
 }
