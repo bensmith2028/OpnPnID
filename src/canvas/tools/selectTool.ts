@@ -73,7 +73,9 @@ function endpointsAreUnshared(startId: Id, endId: Id): boolean {
   return graph.pointDegree(startId) === 1 && graph.pointDegree(endId) === 1;
 }
 
-export function selectOnPointerDown(world: Vec2, shiftKey: boolean, ctx: ToolCtx) {
+/** `additive` is true when the click should extend/toggle the existing selection rather
+ * than replace it — Shift or Ctrl/Cmd, callers OR them together before calling in. */
+export function selectOnPointerDown(world: Vec2, additive: boolean, ctx: ToolCtx) {
   const { selection, setSelection, graph } = useSketchStore.getState();
   const threshold = worldThreshold();
   const { interaction } = ctx;
@@ -84,14 +86,14 @@ export function selectOnPointerDown(world: Vec2, shiftKey: boolean, ctx: ToolCtx
   // A component's connection port is a real point, but clicking it should move the whole
   // component (see SceneGraph's pointOwner doc) rather than dragging the port alone.
   if (point && !ownerComponentId) {
-    const pointIds = new Set(shiftKey ? selection.pointIds : []);
-    if (shiftKey && pointIds.has(point.id)) pointIds.delete(point.id);
+    const pointIds = new Set(additive ? selection.pointIds : []);
+    if (additive && pointIds.has(point.id)) pointIds.delete(point.id);
     else pointIds.add(point.id);
     setSelection({
       pointIds,
-      lineIds: shiftKey ? selection.lineIds : new Set(),
-      arcIds: shiftKey ? selection.arcIds : new Set(),
-      componentIds: shiftKey ? selection.componentIds : new Set(),
+      lineIds: additive ? selection.lineIds : new Set(),
+      arcIds: additive ? selection.arcIds : new Set(),
+      componentIds: additive ? selection.componentIds : new Set(),
     });
     interaction.drag = { kind: 'point', pointId: point.id, before: graph.toJSON() };
     ctx.requestRedraw();
@@ -100,14 +102,14 @@ export function selectOnPointerDown(world: Vec2, shiftKey: boolean, ctx: ToolCtx
 
   const component = ownerComponentId ? graph.components.get(ownerComponentId) : hitTestComponent(world, threshold);
   if (component) {
-    const componentIds = new Set(shiftKey ? selection.componentIds : []);
-    if (shiftKey && componentIds.has(component.id)) componentIds.delete(component.id);
+    const componentIds = new Set(additive ? selection.componentIds : []);
+    if (additive && componentIds.has(component.id)) componentIds.delete(component.id);
     else componentIds.add(component.id);
     setSelection({
       componentIds,
-      pointIds: shiftKey ? selection.pointIds : new Set(),
-      lineIds: shiftKey ? selection.lineIds : new Set(),
-      arcIds: shiftKey ? selection.arcIds : new Set(),
+      pointIds: additive ? selection.pointIds : new Set(),
+      lineIds: additive ? selection.lineIds : new Set(),
+      arcIds: additive ? selection.arcIds : new Set(),
     });
     interaction.drag = {
       kind: 'component',
@@ -125,14 +127,14 @@ export function selectOnPointerDown(world: Vec2, shiftKey: boolean, ctx: ToolCtx
   if (hit) {
     if (hit.kind === 'line') {
       const { line } = hit;
-      const lineIds = new Set(shiftKey ? selection.lineIds : []);
-      if (shiftKey && lineIds.has(line.id)) lineIds.delete(line.id);
+      const lineIds = new Set(additive ? selection.lineIds : []);
+      if (additive && lineIds.has(line.id)) lineIds.delete(line.id);
       else lineIds.add(line.id);
       setSelection({
         lineIds,
-        pointIds: shiftKey ? selection.pointIds : new Set(),
-        arcIds: shiftKey ? selection.arcIds : new Set(),
-        componentIds: shiftKey ? selection.componentIds : new Set(),
+        pointIds: additive ? selection.pointIds : new Set(),
+        arcIds: additive ? selection.arcIds : new Set(),
+        componentIds: additive ? selection.componentIds : new Set(),
       });
 
       if (endpointsAreUnshared(line.startId, line.endId)) {
@@ -151,14 +153,14 @@ export function selectOnPointerDown(world: Vec2, shiftKey: boolean, ctx: ToolCtx
       }
     } else {
       const { arc } = hit;
-      const arcIds = new Set(shiftKey ? selection.arcIds : []);
-      if (shiftKey && arcIds.has(arc.id)) arcIds.delete(arc.id);
+      const arcIds = new Set(additive ? selection.arcIds : []);
+      if (additive && arcIds.has(arc.id)) arcIds.delete(arc.id);
       else arcIds.add(arc.id);
       setSelection({
         arcIds,
-        pointIds: shiftKey ? selection.pointIds : new Set(),
-        lineIds: shiftKey ? selection.lineIds : new Set(),
-        componentIds: shiftKey ? selection.componentIds : new Set(),
+        pointIds: additive ? selection.pointIds : new Set(),
+        lineIds: additive ? selection.lineIds : new Set(),
+        componentIds: additive ? selection.componentIds : new Set(),
       });
 
       if (endpointsAreUnshared(arc.startId, arc.endId)) {
@@ -180,7 +182,7 @@ export function selectOnPointerDown(world: Vec2, shiftKey: boolean, ctx: ToolCtx
     return;
   }
 
-  interaction.drag = { kind: 'marquee', originWorld: world, currentWorld: world, additive: shiftKey };
+  interaction.drag = { kind: 'marquee', originWorld: world, currentWorld: world, additive: additive };
   ctx.requestRedraw();
 }
 

@@ -126,7 +126,7 @@ export function SketchCanvas() {
       else if (activeTool === 'circle') drawCircleOnPointerDown(world, toolCtx);
       else if (activeTool === 'point') pointOnPointerDown(world, toolCtx);
       else if (activeTool === 'component') void componentOnPointerDown(world, toolCtx);
-      else selectOnPointerDown(world, e.shiftKey, toolCtx);
+      else selectOnPointerDown(world, e.shiftKey || e.ctrlKey || e.metaKey, toolCtx);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [activeTool, getWorld],
@@ -195,7 +195,8 @@ export function SketchCanvas() {
     useSketchStore.getState().setCamera(zoomAround(camera, anchor, factor, sizeRef.current));
   }, []);
 
-  // Keyboard shortcuts: Escape, Delete, Undo/Redo, Space-to-pan, Alt-to-disable-snap.
+  // Keyboard shortcuts: Escape, Delete, Undo/Redo, Copy/Paste (selected components),
+  // Space-to-pan, Alt-to-disable-snap.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
@@ -223,6 +224,12 @@ export function SketchCanvas() {
       } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'y') {
         e.preventDefault();
         useSketchStore.getState().redo();
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'c') {
+        e.preventDefault();
+        useSketchStore.getState().copySelectedComponents();
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'v') {
+        e.preventDefault();
+        useSketchStore.getState().pasteComponents();
       } else if (!e.metaKey && !e.ctrlKey && !e.altKey) {
         if (e.key.toLowerCase() === 'v') useSketchStore.getState().setTool('select');
         else if (e.key.toLowerCase() === 'l') useSketchStore.getState().setTool('line');

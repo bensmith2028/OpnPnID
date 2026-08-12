@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { suggestTag } from '../../library/tagging';
 import type { AxisLock, ComponentSnapshot, Id, SceneGraphJSON, Selection, Vec2 } from '../../types/geometry';
 import { SceneGraph } from '../sceneGraph';
 
@@ -41,6 +42,21 @@ export interface ArmedComponent {
   realPartId: string | null;
 }
 
+/** One copied component, captured by value (not by id) so later edits/deletes of the
+ * original don't corrupt or invalidate the clipboard — see copySelectedComponents. */
+interface ClipboardComponent {
+  categoryId: string;
+  realPartId: string | null;
+  snapshot: ComponentSnapshot;
+  tag: string;
+  position: Vec2;
+  rotation: number;
+}
+
+/** World-unit offset applied to each successive paste of the same clipboard (a "cascade"
+ * so repeated Ctrl/Cmd+V doesn't stack every copy exactly on top of the last one). */
+const PASTE_OFFSET = 20;
+
 interface SketchStoreState {
   graph: SceneGraph;
   /**
@@ -69,6 +85,13 @@ interface SketchStoreState {
    * opened by double-clicking a component on the canvas (see SketchCanvas) or from its
    * Properties Panel entry. */
   realHardwareModalComponentId: Id | null;
+  /** Last-copied components (Ctrl/Cmd+C on the current selection), or null if nothing's
+   * been copied yet this session. Not persisted with the project — an in-app clipboard,
+   * not the OS one, so paste only ever targets this same document. */
+  componentClipboard: ClipboardComponent[] | null;
+  /** How many times the current clipboard has been pasted, so each successive paste can
+   * cascade its offset instead of landing exactly on the previous paste. Reset on copy. */
+  pasteCount: number;
   filePath: string | null;
   dirty: boolean;
   past: HistoryEntry[];
@@ -123,6 +146,14 @@ interface SketchStoreState {
   }) => void;
   setComponentTag: (componentId: Id, tag: string) => void;
   setComponentRotationDeg: (componentId: Id, degrees: number) => void;
+  /** Copies the currently-selected components to the in-app clipboard. No-op if none are
+   * selected (leaves any existing clipboard content untouched). */
+  copySelectedComponents: () => void;
+  /** Pastes the clipboard's components back in, offset from their original positions
+   * (cascading further on each repeated paste — see PASTE_OFFSET) and re-tagged to avoid
+   * duplicate tags, then selects the newly-pasted instances. No-op if the clipboard is
+   * empty. */
+  pasteComponents: () => void;
   /** Reassigns a placed instance to a different real part within the same category.
    * Refuses (returns false) if the port count would differ from what's currently placed
    * — see SceneGraph.setComponentPart. */
@@ -146,6 +177,8 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
   armedComponent: null,
   libraryPanelOpen: false,
   realHardwareModalComponentId: null,
+  componentClipboard: null,
+  pasteCount: 0,
   filePath: null,
   dirty: false,
   past: [],
@@ -321,6 +354,58 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
     const ok = get().graph.setComponentPart(componentId, realPartId, snapshot);
     if (ok) get().commit(before);
     return ok;
+  },
+
+  copySelectedComponents: () => {
+    const { graph, selection } = get();
+    const clipboard: ClipboardComponent[] = [];
+    for (const id of selection.componentIds) {
+      const instance = graph.components.get(id);
+      if (!instance) continue;
+      // structuredClone, not a spread — snapshot.realPart.specs is a nested object, and
+      // the clipboard must survive independently of any later edit to the original.
+      clipboard.push({
+        categoryId: instance.categoryId,
+        realPartId: instance.realPartId,
+        snapshot: structuredClone(instance.snapshot),
+        tag: instance.tag,
+        position: { ...instance.position },
+        rotation: instance.rotation,
+      });
+    }
+    if (clipboard.length === 0) return;
+    set({ componentClipboard: clipboard, pasteCount: 0 });
+  },
+
+  pasteComponents: () => {
+    const { graph, componentClipboard, pasteCount, componentScale } = get();
+    if (!componentClipboard || componentClipboard.length === 0) return;
+    const before = graph.toJSON();
+    const offset = PASTE_OFFSET * (pasteCount + 1);
+    const existingTags = new Set([...graph.components.values()].map((c) => c.tag));
+    const newIds: Id[] = [];
+    for (const item of componentClipboard) {
+      // Re-tag rather than reuse the copied tag verbatim — placed components should have
+      // unique ISA-lite tags, and pasting a duplicate would silently break that.
+      const letter = item.tag.split('-')[0] || 'X';
+      const tag = suggestTag(existingTags, letter);
+      existingTags.add(tag);
+      const instance = graph.addComponent({
+        categoryId: item.categoryId,
+        realPartId: item.realPartId,
+        tag,
+        position: { x: item.position.x + offset, y: item.position.y + offset },
+        rotation: item.rotation,
+        snapshot: structuredClone(item.snapshot),
+        scaleFactor: componentScale,
+      });
+      newIds.push(instance.id);
+    }
+    set({
+      selection: { pointIds: new Set(), lineIds: new Set(), arcIds: new Set(), componentIds: new Set(newIds) },
+      pasteCount: pasteCount + 1,
+    });
+    get().commit(before);
   },
 
   deleteSelection: () => {
