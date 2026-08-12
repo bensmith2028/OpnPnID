@@ -195,8 +195,9 @@ export function SketchCanvas() {
     useSketchStore.getState().setCamera(zoomAround(camera, anchor, factor, sizeRef.current));
   }, []);
 
-  // Keyboard shortcuts: Escape, Delete, Undo/Redo, Copy/Paste (selected components),
-  // Space-to-pan, Alt-to-disable-snap.
+  // Keyboard shortcuts: Escape, Delete, Undo/Redo, Space-to-pan, Alt-to-disable-snap.
+  // Copy/Paste are handled separately below, via the browser's own copy/paste events
+  // rather than a raw Ctrl/Cmd+C|V keydown check.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
@@ -224,12 +225,6 @@ export function SketchCanvas() {
       } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'y') {
         e.preventDefault();
         useSketchStore.getState().redo();
-      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'c') {
-        e.preventDefault();
-        useSketchStore.getState().copySelectedComponents();
-      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'v') {
-        e.preventDefault();
-        useSketchStore.getState().pasteComponents();
       } else if (!e.metaKey && !e.ctrlKey && !e.altKey) {
         if (e.key.toLowerCase() === 'v') useSketchStore.getState().setTool('select');
         else if (e.key.toLowerCase() === 'l') useSketchStore.getState().setTool('line');
@@ -250,6 +245,38 @@ export function SketchCanvas() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTool]);
+
+  // Copy/paste of selected components, via the browser's own `copy`/`paste` clipboard
+  // events rather than a raw Ctrl/Cmd+C|V `keydown` check. This matters in a native
+  // webview shell: Cmd/Ctrl+C and +V are OS-level "clipboard" gestures, and depending on
+  // the platform a plain keydown listener can miss them if the webview's own native
+  // copy/paste handling intercepts the keystroke first — the `copy`/`paste` events are
+  // the browser's own designated hook for this exact gesture (however it was invoked:
+  // keyboard, a future Edit menu, a right-click menu, ...) and fire reliably regardless.
+  // `preventDefault()` stops the browser from also touching the real OS clipboard, since
+  // this is an in-app clipboard (see useSketchStore's componentClipboard).
+  useEffect(() => {
+    const isEditingText = (target: EventTarget | null) => {
+      const el = target as HTMLElement | null;
+      return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA');
+    };
+    const onCopy = (e: ClipboardEvent) => {
+      if (isEditingText(e.target)) return; // let native text copy proceed
+      e.preventDefault();
+      useSketchStore.getState().copySelectedComponents();
+    };
+    const onPaste = (e: ClipboardEvent) => {
+      if (isEditingText(e.target)) return;
+      e.preventDefault();
+      useSketchStore.getState().pasteComponents();
+    };
+    document.addEventListener('copy', onCopy);
+    document.addEventListener('paste', onPaste);
+    return () => {
+      document.removeEventListener('copy', onCopy);
+      document.removeEventListener('paste', onPaste);
+    };
+  }, []);
 
   return (
     <div ref={containerRef} className="sketch-canvas-container">

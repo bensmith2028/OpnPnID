@@ -33,9 +33,13 @@ import { resolveSymbol } from './builtinSymbols';
 import * as db from './db';
 import { describeError } from './errors';
 
-const CANVAS_PX = 480;
-/** Fixed zoom: a ±14-unit symbol (the built-in convention) fills roughly 2/3 of the canvas. */
-const PX_PER_UNIT = 12;
+const CANVAS_PX = 560;
+/** Fixed zoom: visible range is CANVAS_PX / 2 / PX_PER_UNIT = ±28 local units. Sized for
+ * the built-in symbols' actual extents, not just their nominal "±14" convention — the
+ * automated-actuator valves' actuator box reaches y=-21 (see builtinSymbols.ts's
+ * withAutomatedStem), so ±20 (the old 480px/12px-per-unit view) clipped it. ±28 leaves
+ * real margin above that, and above the default uploaded-image width too. */
+const PX_PER_UNIT = 10;
 const GRID_UNITS = 2;
 /** Click/snap tolerance in screen pixels, converted to local units where needed. */
 const PICK_PX = 8;

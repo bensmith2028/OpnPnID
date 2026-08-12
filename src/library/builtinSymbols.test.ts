@@ -54,6 +54,16 @@ describe('resolveSymbol', () => {
     expect(symbol.ports).toHaveLength(4);
     expectStructurallyValid(symbol);
   });
+
+  it('stays within the symbol editor\'s visible ±25-unit safety margin (regression: the automated-actuator box used to reach y=-21 against an editor view that only showed ±20)', () => {
+    for (const { subtype, actuation } of valveCases) {
+      const symbol = resolveSymbol(subtype, actuation, 2);
+      for (const p of Object.values(symbol.points)) {
+        expect(Math.abs(p.x), `${subtype}/${actuation} point x=${p.x}`).toBeLessThanOrEqual(25);
+        expect(Math.abs(p.y), `${subtype}/${actuation} point y=${p.y}`).toBeLessThanOrEqual(25);
+      }
+    }
+  });
 });
 
 describe('generatePlaceholderSymbol', () => {

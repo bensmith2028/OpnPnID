@@ -62,4 +62,31 @@ describe('copySelectedComponents / pasteComponents', () => {
     useSketchStore.getState().pasteComponents();
     expect(useSketchStore.getState().graph.components.size).toBe(before);
   });
+
+  it('carries the assigned real part (manufacturer/model/specs/datasheet) over to the pasted copy', () => {
+    const withRealPart: ComponentSnapshot = {
+      ...sampleSnapshot(),
+      realPart: {
+        manufacturer: 'Swagelok',
+        modelNumber: 'SS-83XS6',
+        datasheetUrl: 'https://example.com/ds.pdf',
+        specs: { cv: 2.5, fail_position: 'FC' },
+      },
+    };
+    const { placeComponent } = useSketchStore.getState();
+    placeComponent({ categoryId: 'cat1', realPartId: 'rp1', position: { x: 0, y: 0 }, tag: 'V-101', snapshot: withRealPart });
+    const placedId = [...useSketchStore.getState().selection.componentIds][0];
+    useSketchStore.setState((s) => ({ selection: { ...s.selection, componentIds: new Set([placedId]) } }));
+
+    useSketchStore.getState().copySelectedComponents();
+    useSketchStore.getState().pasteComponents();
+    const { graph, selection } = useSketchStore.getState();
+    const pasted = graph.components.get([...selection.componentIds][0]!)!;
+
+    expect(pasted.realPartId).toBe('rp1');
+    expect(pasted.snapshot.realPart).toEqual(withRealPart.realPart);
+    // Independent copy, not a shared reference — editing the pasted specs must not also
+    // change the original's.
+    expect(pasted.snapshot.realPart).not.toBe(graph.components.get(placedId)!.snapshot.realPart);
+  });
 });

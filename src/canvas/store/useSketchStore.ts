@@ -57,6 +57,14 @@ interface ClipboardComponent {
  * so repeated Ctrl/Cmd+V doesn't stack every copy exactly on top of the last one). */
 const PASTE_OFFSET = 20;
 
+/** Plain JSON round-trip rather than `structuredClone` — `ComponentSnapshot` is already
+ * pure JSON data (no Dates/Maps/functions), and `structuredClone` is a fairly recent
+ * global that isn't guaranteed present in every embedded webview runtime this app might
+ * ship on; this has no such requirement. */
+function cloneSnapshot(snapshot: ComponentSnapshot): ComponentSnapshot {
+  return JSON.parse(JSON.stringify(snapshot)) as ComponentSnapshot;
+}
+
 interface SketchStoreState {
   graph: SceneGraph;
   /**
@@ -362,12 +370,12 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
     for (const id of selection.componentIds) {
       const instance = graph.components.get(id);
       if (!instance) continue;
-      // structuredClone, not a spread — snapshot.realPart.specs is a nested object, and
-      // the clipboard must survive independently of any later edit to the original.
+      // Deep-cloned, not a spread — snapshot.realPart.specs is a nested object, and the
+      // clipboard must survive independently of any later edit to the original.
       clipboard.push({
         categoryId: instance.categoryId,
         realPartId: instance.realPartId,
-        snapshot: structuredClone(instance.snapshot),
+        snapshot: cloneSnapshot(instance.snapshot),
         tag: instance.tag,
         position: { ...instance.position },
         rotation: instance.rotation,
@@ -396,7 +404,7 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
         tag,
         position: { x: item.position.x + offset, y: item.position.y + offset },
         rotation: item.rotation,
-        snapshot: structuredClone(item.snapshot),
+        snapshot: cloneSnapshot(item.snapshot),
         scaleFactor: componentScale,
       });
       newIds.push(instance.id);
