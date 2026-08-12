@@ -611,6 +611,9 @@ body {
   align-items: center;
   gap: 4px;
   margin-bottom: 8px;
+  /* Five tool buttons plus the two action buttons can outgrow the panel on narrow
+     rendering; wrapping keeps them all reachable instead of clipping the last one. */
+  flex-wrap: wrap;
 }
 
 .symbol-editor-toolbar-gap {

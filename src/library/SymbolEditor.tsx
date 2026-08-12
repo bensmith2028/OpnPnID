@@ -41,10 +41,75 @@ const GRID_UNITS = 2;
 const PICK_PX = 8;
 /** Roughly the width of a built-in symbol, so an uploaded image lands at a comparable scale. */
 const DEFAULT_IMAGE_WIDTH = 28;
+/** Local units a pasted copy is nudged by, so it doesn't land exactly on its original.
+ * Repeated pastes of the same clipboard cascade by multiples of this. */
+const PASTE_OFFSET = 2;
 
 type EditorTab = 'draw' | 'image';
-type DrawTool = 'point' | 'line' | 'arc' | 'select';
-type DrawSelection = { kind: 'point' | 'line' | 'arc'; id: Id } | null;
+type DrawTool = 'point' | 'line' | 'arc' | 'circle' | 'select';
+/** Hotkeys deliberately mirror the main app's own tool letters (see SketchCanvas's key
+ * handler) — muscle memory shouldn't change just because this modal is open. */
+const TOOL_HOTKEYS: Record<DrawTool, string> = { point: 'P', line: 'L', arc: 'A', circle: 'C', select: 'V' };
+const HOTKEY_TOOLS: Record<string, DrawTool> = { p: 'point', l: 'line', a: 'arc', c: 'circle', v: 'select' };
+
+/** What one click landed on — the atom a selection is built from. */
+type DrawHit = { kind: 'point' | 'line' | 'arc'; id: Id } | null;
+
+/** The selection is multi-item (shift-click and marquee), so it's three id sets rather
+ * than a single `{kind, id}`: a marquee routinely spans a mix of points, lines and arcs. */
+interface DrawSelection {
+  points: Set<Id>;
+  lines: Set<Id>;
+  arcs: Set<Id>;
+}
+
+/** Geometry-only copy buffer (a `SymbolGeometry` minus ports/image). Copy/paste duplicates
+ * shapes, never connection semantics — a pasted point is never automatically a port. */
+interface DrawClipboard {
+  points: { id: Id; x: number; y: number }[];
+  lines: [Id, Id][];
+  arcs: { a: Id; b: Id; bulge: number }[];
+}
+
+interface LocalRect {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+function emptySelection(): DrawSelection {
+  return { points: new Set(), lines: new Set(), arcs: new Set() };
+}
+
+function selectionCount(sel: DrawSelection): number {
+  return sel.points.size + sel.lines.size + sel.arcs.size;
+}
+
+/** Corner-order-independent rect, so a marquee dragged up-left behaves like one dragged
+ * down-right. */
+function normalizeRect(a: Vec2, b: Vec2): LocalRect {
+  return { x0: Math.min(a.x, b.x), y0: Math.min(a.y, b.y), x1: Math.max(a.x, b.x), y1: Math.max(a.y, b.y) };
+}
+
+function pointInRect(p: Vec2, rect: LocalRect): boolean {
+  return p.x >= rect.x0 && p.x <= rect.x1 && p.y >= rect.y0 && p.y <= rect.y1;
+}
+
+/**
+ * The two diametrically-opposite points a circle is built from. There's no Circle
+ * primitive in this data model: a full circle is two bulge=1 arcs sharing both endpoints
+ * (see sceneGraph.test.ts's "circle composition" block, and drawCircleTool.ts for the main
+ * app's version of the same construction). The clicked rim point is kept as-is so the
+ * circle passes exactly through where the user clicked.
+ */
+function circleArcEndpoints(center: Vec2, rim: Vec2): { radius: number; a: Vec2; b: Vec2 } {
+  return {
+    radius: distance(center, rim),
+    a: { x: rim.x, y: rim.y },
+    b: { x: 2 * center.x - rim.x, y: 2 * center.y - rim.y },
+  };
+}
 
 /** A port placed on an uploaded image. Image symbols have no other geometry, so every
  * point the user places here IS a port — no separate marking step. */
@@ -205,9 +270,9 @@ function drawPointMarker(ctx: CanvasRenderingContext2D, p: Vec2, colors: EditorC
 
 /** Nearest point/line/arc within the pick tolerance, points first (they're what the user
  * is usually aiming at, and they sit on top of the edges that reference them). */
-function hitTest(graph: SceneGraph, local: Vec2): DrawSelection {
+function hitTest(graph: SceneGraph, local: Vec2): DrawHit {
   const tol = PICK_PX / PX_PER_UNIT;
-  let best: { sel: DrawSelection; d: number } | null = null;
+  let best: { sel: DrawHit; d: number } | null = null;
   for (const p of graph.points.values()) {
     const d = distance(local, p);
     if (d <= tol && (!best || d < best.d)) best = { sel: { kind: 'point', id: p.id }, d };
@@ -228,6 +293,75 @@ function hitTest(graph: SceneGraph, local: Vec2): DrawSelection {
     if (d <= tol && (!best || d < best.d)) best = { sel: { kind: 'arc', id: arc.id }, d };
   }
   return best ? best.sel : null;
+}
+
+/** Applies one click to the selection: replace by default, toggle when `additive`
+ * (Shift/Ctrl/Cmd) — the same convention as the main app's selectTool. */
+function withHit(prev: DrawSelection, hit: NonNullable<DrawHit>, additive: boolean): DrawSelection {
+  const next = additive ? { points: new Set(prev.points), lines: new Set(prev.lines), arcs: new Set(prev.arcs) } : emptySelection();
+  const bucket = hit.kind === 'point' ? next.points : hit.kind === 'line' ? next.lines : next.arcs;
+  if (additive && bucket.has(hit.id)) bucket.delete(hit.id);
+  else bucket.add(hit.id);
+  return next;
+}
+
+/** Marquee result: every point inside the rect, plus every edge with BOTH endpoints
+ * inside it (partial overlaps are left out — same "fully inside" rule as the main app's
+ * `selectOnPointerUp`). `base` is the selection being extended, or an empty one. */
+function selectInsideRect(graph: SceneGraph, rect: LocalRect, base: DrawSelection): DrawSelection {
+  const next = { points: new Set(base.points), lines: new Set(base.lines), arcs: new Set(base.arcs) };
+  for (const p of graph.points.values()) if (pointInRect(p, rect)) next.points.add(p.id);
+  for (const line of graph.lines.values()) {
+    const a = graph.points.get(line.startId);
+    const b = graph.points.get(line.endId);
+    if (a && b && pointInRect(a, rect) && pointInRect(b, rect)) next.lines.add(line.id);
+  }
+  for (const arc of graph.arcs.values()) {
+    const a = graph.points.get(arc.startId);
+    const b = graph.points.get(arc.endId);
+    if (a && b && pointInRect(a, rect) && pointInRect(b, rect)) next.arcs.add(arc.id);
+  }
+  return next;
+}
+
+/**
+ * The clipboard payload for a selection. Edges come along when both their endpoints are
+ * copied — selecting two connected points and copying should bring their connector, which
+ * is what a user means by "copy these". Explicitly selected edges pull their own endpoints
+ * in first, so selecting just a line copies a usable line rather than nothing.
+ */
+function clipboardFromSelection(graph: SceneGraph, sel: DrawSelection): DrawClipboard | null {
+  const pointIds = new Set(sel.points);
+  for (const id of sel.lines) {
+    const line = graph.lines.get(id);
+    if (line) {
+      pointIds.add(line.startId);
+      pointIds.add(line.endId);
+    }
+  }
+  for (const id of sel.arcs) {
+    const arc = graph.arcs.get(id);
+    if (arc) {
+      pointIds.add(arc.startId);
+      pointIds.add(arc.endId);
+    }
+  }
+
+  const points = [...pointIds]
+    .map((id) => graph.points.get(id))
+    .filter((p): p is NonNullable<typeof p> => !!p)
+    .map((p) => ({ id: p.id, x: p.x, y: p.y }));
+  if (points.length === 0) return null;
+
+  const lines: [Id, Id][] = [];
+  for (const line of graph.lines.values()) {
+    if (pointIds.has(line.startId) && pointIds.has(line.endId)) lines.push([line.startId, line.endId]);
+  }
+  const arcs = [...graph.arcs.values()]
+    .filter((arc) => pointIds.has(arc.startId) && pointIds.has(arc.endId))
+    .map((arc) => ({ a: arc.startId, b: arc.endId, bulge: arc.bulge }));
+
+  return { points, lines, arcs };
 }
 
 /** Trims float noise out of a derived dimension so the width/height inputs stay readable. */
@@ -251,9 +385,20 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
   const bump = () => setVersion((v) => v + 1);
 
   const [tool, setTool] = useState<DrawTool>('point');
-  const [selected, setSelected] = useState<DrawSelection>(null);
+  const [selection, setSelection] = useState<DrawSelection>(emptySelection);
   const [pendingLine, setPendingLine] = useState<Id | null>(null);
   const [pendingArc, setPendingArc] = useState<{ startId: Id; endId: Id | null } | null>(null);
+  /** Circle click 1: the centre is a bare position, not a graph point — the finished
+   * circle is only its two rim points, so a centre point would be stray saved geometry. */
+  const [pendingCircle, setPendingCircle] = useState<{ center: Vec2 } | null>(null);
+  /** Snapped cursor while a circle is pending, purely for the radius preview. */
+  const [circleCursor, setCircleCursor] = useState<Vec2 | null>(null);
+  /** In-flight marquee drag (Select tool on empty space); null when not dragging. */
+  const [marquee, setMarquee] = useState<{ origin: Vec2; current: Vec2; additive: boolean } | null>(null);
+  const [clipboard, setClipboard] = useState<DrawClipboard | null>(null);
+  /** How many times the current clipboard has been pasted, so repeats cascade instead of
+   * stacking on top of each other. Reset by every copy. */
+  const [pasteCount, setPasteCount] = useState(0);
   const [ports, setPorts] = useState<string[]>([]);
 
   const [imageDataUrl, setImageDataUrl] = useState<string | null>(null);
@@ -319,48 +464,123 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /** Abandons whatever multi-click/drag gesture is in flight — shared by Escape and by
+   * every tool switch, so a half-placed line can't leak into the next tool. */
   const cancelPending = useCallback(() => {
     setPendingLine(null);
     setPendingArc(null);
+    setPendingCircle(null);
+    setCircleCursor(null);
+    setMarquee(null);
   }, []);
 
   const deleteSelected = useCallback(() => {
-    if (!selected) return;
+    if (selectionCount(selection) === 0) return;
     setError(null);
-    if (selected.kind === 'line') graph.removeLine(selected.id);
-    else if (selected.kind === 'arc') graph.removeArc(selected.id);
-    else if (!graph.removePoint(selected.id)) {
-      // SceneGraph refuses to orphan an edge's endpoint — surface that instead of a
-      // silent no-op, since the point visibly stays put.
-      setError('That point is still used by a line or arc — delete those first.');
-      return;
-    } else {
-      setPorts((prev) => prev.filter((id) => id !== selected.id));
-    }
-    setSelected(null);
-    bump();
-  }, [graph, selected]);
+    // Edges before points, matching useSketchStore's deleteSelection: dropping the
+    // selected lines/arcs first frees up their endpoints, so a selection containing both
+    // an edge and its endpoints deletes cleanly in one go.
+    for (const id of selection.arcs) graph.removeArc(id);
+    for (const id of selection.lines) graph.removeLine(id);
 
-  // Scoped key handling, same pattern as RealHardwareModal: capture Escape so the
-  // canvas's global handler doesn't also switch tools behind the modal.
+    const removed: Id[] = [];
+    const blocked: Id[] = [];
+    for (const id of selection.points) {
+      if (graph.removePoint(id)) removed.push(id);
+      else blocked.push(id);
+    }
+    if (removed.length > 0) {
+      const gone = new Set(removed);
+      setPorts((prev) => prev.filter((id) => !gone.has(id)));
+    }
+    // SceneGraph refuses to orphan an edge's endpoint — surface that instead of a silent
+    // no-op, since the point visibly stays put. Blocked points stay selected so it's clear
+    // which ones the message is about.
+    if (blocked.length > 0) {
+      setError(
+        blocked.length === 1
+          ? 'That point is still used by a line or arc — delete those first.'
+          : `${blocked.length} points are still used by a line or arc — delete those first.`,
+      );
+    }
+    setSelection({ points: new Set(blocked), lines: new Set(), arcs: new Set() });
+    bump();
+  }, [graph, selection]);
+
+  const copySelection = useCallback(() => {
+    const payload = clipboardFromSelection(graph, selection);
+    if (!payload) return;
+    setClipboard(payload);
+    setPasteCount(0);
+  }, [graph, selection]);
+
+  /** Pastes at a cascading offset with fresh ids throughout, then selects the copy so it
+   * can immediately be deleted or pasted again. Ports are intentionally not carried over. */
+  const pasteClipboard = useCallback(() => {
+    if (!clipboard) return;
+    setError(null);
+    const offset = PASTE_OFFSET * (pasteCount + 1);
+    const idMap = new Map<Id, Id>();
+    const points = new Set<Id>();
+    for (const p of clipboard.points) {
+      const created = graph.addPoint(p.x + offset, p.y + offset, freshId(graph, 'p'));
+      idMap.set(p.id, created.id);
+      points.add(created.id);
+    }
+    const lines = new Set<Id>();
+    for (const [a, b] of clipboard.lines) {
+      const created = graph.addLine(idMap.get(a)!, idMap.get(b)!, null, freshId(graph, 'l'));
+      if (created) lines.add(created.id);
+    }
+    const arcs = new Set<Id>();
+    for (const arc of clipboard.arcs) {
+      const created = graph.addArc(idMap.get(arc.a)!, idMap.get(arc.b)!, arc.bulge, freshId(graph, 'a'));
+      if (created) arcs.add(created.id);
+    }
+    setPasteCount((n) => n + 1);
+    setSelection({ points, lines, arcs });
+    bump();
+  }, [clipboard, graph, pasteCount]);
+
+  // Scoped key handling, same pattern as RealHardwareModal. This is a full lockout, not a
+  // filter: while the modal is open EVERY keystroke is stopped in the capture phase so
+  // SketchCanvas's global handler can't switch tools or delete geometry behind it. Typing
+  // in a text field is the one exemption — those keys are the field's, not the editor's.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
       const isEditingText = !!target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA');
+      // Escape is handled even from a focused input: it means "back out of the modal",
+      // and letting it through would switch the app's tool behind us.
       if (e.key === 'Escape') {
         e.stopPropagation();
-        if (pendingLine || pendingArc) cancelPending();
+        if (pendingLine || pendingArc || pendingCircle || marquee) cancelPending();
         else onClose();
-      } else if ((e.key === 'Delete' || e.key === 'Backspace') && !isEditingText) {
-        // Swallowed even on the image tab: while this modal is open, Delete must never
-        // reach SketchCanvas and delete the document's selection behind it.
-        e.stopPropagation();
+        return;
+      }
+      if (isEditingText) return;
+      e.stopPropagation();
+
+      const key = e.key.toLowerCase();
+      if (e.key === 'Delete' || e.key === 'Backspace') {
         if (tab === 'draw') deleteSelected();
+      } else if (e.metaKey || e.ctrlKey) {
+        // preventDefault so the browser's own copy/paste doesn't fire alongside ours.
+        if (key === 'c' && tab === 'draw') {
+          e.preventDefault();
+          copySelection();
+        } else if (key === 'v' && tab === 'draw') {
+          e.preventDefault();
+          pasteClipboard();
+        }
+      } else if (!e.altKey && tab === 'draw' && HOTKEY_TOOLS[key]) {
+        setTool(HOTKEY_TOOLS[key]);
+        cancelPending();
       }
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
-  }, [cancelPending, deleteSelected, onClose, pendingArc, pendingLine, tab]);
+  }, [cancelPending, copySelection, deleteSelected, marquee, onClose, pasteClipboard, pendingArc, pendingCircle, pendingLine, tab]);
 
   // ------------------------------------------------------------------ Draw tab canvas
 
@@ -379,8 +599,7 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
       const a = graph.points.get(line.startId);
       const b = graph.points.get(line.endId);
       if (!a || !b) continue;
-      const selectedEdge = selected?.kind === 'line' && selected.id === line.id;
-      ctx.strokeStyle = selectedEdge ? colors.accent : colors.line;
+      ctx.strokeStyle = selection.lines.has(line.id) ? colors.accent : colors.line;
       const sa = localToScreen(a);
       const sb = localToScreen(b);
       ctx.beginPath();
@@ -393,16 +612,59 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
       const a = graph.points.get(arc.startId);
       const b = graph.points.get(arc.endId);
       if (!a || !b) continue;
-      ctx.strokeStyle = selected?.kind === 'arc' && selected.id === arc.id ? colors.accent : colors.line;
+      ctx.strokeStyle = selection.arcs.has(arc.id) ? colors.accent : colors.line;
       strokeLocalArc(ctx, a, b, arc.bulge);
+    }
+
+    // Live radius preview between the centre click and the cursor, dashed so it reads as
+    // not-yet-committed (the pending line/arc endpoints get the same "in progress" accent).
+    if (pendingCircle) {
+      const center = localToScreen(pendingCircle.center);
+      const radius = circleCursor ? distance(pendingCircle.center, circleCursor) : 0;
+      ctx.save();
+      ctx.strokeStyle = colors.accent;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 3]);
+      if (radius > 1e-6) {
+        ctx.beginPath();
+        ctx.arc(center.x, center.y, radius * PX_PER_UNIT, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.arc(center.x, center.y, 3, 0, Math.PI * 2);
+      ctx.fillStyle = colors.accent;
+      ctx.fill();
+      ctx.restore();
     }
 
     const portSet = new Set(ports);
     for (const p of graph.points.values()) {
       const isPending = p.id === pendingLine || p.id === pendingArc?.startId || p.id === pendingArc?.endId;
-      drawPointMarker(ctx, p, colors, portSet.has(p.id), isPending || (selected?.kind === 'point' && selected.id === p.id));
+      drawPointMarker(ctx, p, colors, portSet.has(p.id), isPending || selection.points.has(p.id));
     }
-  }, [graph, ports, selected, pendingArc, pendingLine, tab, version]);
+
+    if (marquee) {
+      const a = localToScreen(marquee.origin);
+      const b = localToScreen(marquee.current);
+      const x = Math.min(a.x, b.x);
+      const y = Math.min(a.y, b.y);
+      const w = Math.abs(a.x - b.x);
+      const h = Math.abs(a.y - b.y);
+      ctx.save();
+      // globalAlpha rather than an rgba() literal: the accent comes from a CSS token, so
+      // its colour space isn't something this file can safely take apart.
+      ctx.globalAlpha = 0.15;
+      ctx.fillStyle = colors.accent;
+      ctx.fillRect(x, y, w, h);
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = colors.accent;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 3]);
+      ctx.strokeRect(x, y, w, h);
+      ctx.restore();
+    }
+  }, [graph, ports, selection, marquee, pendingArc, pendingCircle, circleCursor, pendingLine, tab, version]);
 
   const onDrawPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -410,7 +672,16 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
     setError(null);
 
     if (tool === 'select') {
-      setSelected(hitTest(graph, local));
+      const additive = e.shiftKey || e.ctrlKey || e.metaKey;
+      const hit = hitTest(graph, local);
+      if (hit) {
+        setSelection((prev) => withHit(prev, hit, additive));
+      } else {
+        // Empty space starts a marquee. A plain click is just a zero-size one, which on
+        // pointer-up clears the selection — so click-to-deselect still works.
+        e.currentTarget.setPointerCapture(e.pointerId);
+        setMarquee({ origin: local, current: local, additive });
+      }
       bump();
       return;
     }
@@ -419,7 +690,7 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
     const pointAt = (): Id => snap.snappedPointId ?? graph.addPoint(snap.point.x, snap.point.y, freshId(graph, 'p')).id;
 
     if (tool === 'point') {
-      setSelected({ kind: 'point', id: pointAt() });
+      setSelection({ points: new Set([pointAt()]), lines: new Set(), arcs: new Set() });
     } else if (tool === 'line') {
       const id = pointAt();
       if (pendingLine === null) {
@@ -442,14 +713,61 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
         if (start && end) graph.addArc(start.id, end.id, bulgeFromSagittaCursor(start, end, local), freshId(graph, 'a'));
         setPendingArc(null);
       }
+    } else if (tool === 'circle') {
+      // Two clicks: centre, then any point on the circumference.
+      if (!pendingCircle) {
+        setPendingCircle({ center: snap.point });
+        setCircleCursor(snap.point);
+      } else {
+        const { radius, a, b } = circleArcEndpoints(pendingCircle.center, snap.point);
+        if (radius > 1e-6) {
+          const pa = graph.addPoint(a.x, a.y, freshId(graph, 'p'));
+          const pb = graph.addPoint(b.x, b.y, freshId(graph, 'p'));
+          // bulge 1 = tan(90°) per the DXF convention, i.e. a semicircle each way.
+          const top = graph.addArc(pa.id, pb.id, 1, freshId(graph, 'a'));
+          const bottom = graph.addArc(pb.id, pa.id, 1, freshId(graph, 'a'));
+          setSelection({
+            points: new Set(),
+            lines: new Set(),
+            arcs: new Set([top?.id, bottom?.id].filter((id): id is Id => !!id)),
+          });
+        }
+        setPendingCircle(null);
+        setCircleCursor(null);
+      }
     }
     bump();
   };
 
+  const onDrawPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!marquee && !pendingCircle) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const local = screenToLocal({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+    if (marquee) {
+      setMarquee((prev) => (prev ? { ...prev, current: local } : prev));
+    } else {
+      // Preview against the snapped cursor, so what's drawn is the circle a click commits.
+      const snap = computeSnap({ cursor: local, graph, threshold: PICK_PX / PX_PER_UNIT, gridSize: GRID_UNITS });
+      setCircleCursor(snap.point);
+    }
+  };
+
+  const onDrawPointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!marquee) return;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+    const rect = normalizeRect(marquee.origin, marquee.current);
+    setSelection((prev) => selectInsideRect(graph, rect, marquee.additive ? prev : emptySelection()));
+    setMarquee(null);
+    bump();
+  };
+
+  const selectedPointId = selection.points.size === 1 ? [...selection.points][0] : null;
+
+  /** Marking several points as ports at once is a different, more error-prone action, so
+   * this stays a single-point operation even though the selection can hold many. */
   const togglePort = () => {
-    if (selected?.kind !== 'point') return;
-    const id = selected.id;
-    setPorts((prev) => (prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id]));
+    if (!selectedPointId) return;
+    setPorts((prev) => (prev.includes(selectedPointId) ? prev.filter((p) => p !== selectedPointId) : [...prev, selectedPointId]));
   };
 
   // ----------------------------------------------------------------- Image tab canvas
@@ -575,7 +893,9 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
         ? 'Click a start point, then an end point. Escape cancels.'
         : tool === 'arc'
           ? 'Click start, then end, then a third point to set how far the arc bows. Escape cancels.'
-          : 'Click a point, line or arc to select it, then Delete Selected or Toggle Port.';
+          : tool === 'circle'
+            ? 'Click the centre, then a point on the circle. Escape cancels.'
+            : 'Click to select, Shift-click to add/remove, or drag a box around several. Ctrl/Cmd+C and Ctrl/Cmd+V copy and paste.';
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -605,23 +925,24 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
         ) : tab === 'draw' ? (
           <>
             <div className="symbol-editor-toolbar">
-              {(['point', 'line', 'arc', 'select'] as DrawTool[]).map((t) => (
+              {(['point', 'line', 'arc', 'circle', 'select'] as DrawTool[]).map((t) => (
                 <button
                   key={t}
                   className={tool === t ? 'active' : ''}
+                  title={`${t[0].toUpperCase() + t.slice(1)} (${TOOL_HOTKEYS[t]})`}
                   onClick={() => {
                     setTool(t);
                     cancelPending();
                   }}
                 >
-                  {t === 'select' ? 'Select' : t[0].toUpperCase() + t.slice(1)}
+                  {t[0].toUpperCase() + t.slice(1)}
                 </button>
               ))}
               <span className="symbol-editor-toolbar-gap" />
-              <button onClick={togglePort} disabled={selected?.kind !== 'point'} title="Mark/unmark the selected point as a connection port">
+              <button onClick={togglePort} disabled={!selectedPointId} title="Mark/unmark the selected point as a connection port">
                 Toggle Port
               </button>
-              <button onClick={deleteSelected} disabled={!selected}>
+              <button onClick={deleteSelected} disabled={selectionCount(selection) === 0}>
                 Delete Selected
               </button>
             </div>
@@ -630,6 +951,8 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
               className="symbol-editor-canvas"
               style={{ width: CANVAS_PX, height: CANVAS_PX }}
               onPointerDown={onDrawPointerDown}
+              onPointerMove={onDrawPointerMove}
+              onPointerUp={onDrawPointerUp}
             />
             <p className="library-muted">{drawHint}</p>
             <p className="library-muted">
@@ -694,4 +1017,4 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
   );
 }
 
-export { graphToGeometry, localToScreen, populateGraph, screenToLocal };
+export { circleArcEndpoints, graphToGeometry, localToScreen, normalizeRect, pointInRect, populateGraph, screenToLocal, selectInsideRect };
