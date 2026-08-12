@@ -74,11 +74,26 @@ interface ClipboardArc {
   bulge: number;
 }
 
+/** A line/arc endpoint that was a component's connection port at copy time, *and* whose
+ * owning component was copied along with it — rather than cloning the port as an
+ * independent point, pasteSelection resolves it to the matching port on the freshly
+ * pasted copy of that same component (found by `localId`, which every copy of a symbol
+ * shares regardless of the fresh pointId each paste gets — see SceneGraph.addComponent).
+ * This is what keeps a "component + its attached pipe" selection reconnected after a
+ * paste instead of the pipe landing detached. `id` is the port's original point id, same
+ * key space as ClipboardPoint/ClipboardLine/ClipboardArc use for remapping. */
+interface ClipboardPortRef {
+  id: Id;
+  componentIndex: number;
+  localId: string;
+}
+
 interface SketchClipboard {
   components: ClipboardComponent[];
   points: ClipboardPoint[];
   lines: ClipboardLine[];
   arcs: ClipboardArc[];
+  portRefs: ClipboardPortRef[];
 }
 
 /** World-unit offset applied to each successive paste of the same clipboard (a "cascade"
@@ -421,9 +436,11 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
   copySelection: () => {
     const { graph, selection } = get();
     const components: ClipboardComponent[] = [];
+    const componentIndexById = new Map<Id, number>();
     for (const id of selection.componentIds) {
       const instance = graph.components.get(id);
       if (!instance) continue;
+      componentIndexById.set(id, components.length);
       // Deep-cloned, not a spread — snapshot.realPart.specs is a nested object, and the
       // clipboard must survive independently of any later edit to the original.
       components.push({
@@ -439,8 +456,7 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
     // Free geometry (pipe segments): every directly-selected point, plus the endpoints of
     // every selected line/arc — an edge comes along once *both* its endpoints are copied,
     // so selecting just a line (without its endpoints individually selected) still copies
-    // a usable line rather than nothing. Ports (component-owned points) are never copied
-    // on their own; a copied component brings its own ports along when it's pasted.
+    // a usable line rather than nothing.
     const pointIds = new Set(selection.pointIds);
     for (const id of selection.lineIds) {
       const line = graph.lines.get(id);
@@ -456,13 +472,33 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
         pointIds.add(arc.endId);
       }
     }
-    for (const id of pointIds) if (graph.componentOwning(id)) pointIds.delete(id);
 
+    // A port (component-owned point) is never copied as an independent point. If its
+    // owning component is *also* part of this copy, remember how to relink the line/arc
+    // to that component's pasted copy instead (ClipboardPortRef) — this is what keeps a
+    // "component + its attached pipe" selection reconnected after paste. If the owning
+    // component isn't part of the copy, the port's current position is copied as a plain,
+    // now-detached point instead, so the pipe still pastes as a usable (if unattached)
+    // line rather than being dropped.
     const points: ClipboardPoint[] = [];
+    const portRefs: ClipboardPortRef[] = [];
     for (const id of pointIds) {
       const p = graph.points.get(id);
-      if (p) points.push({ id: p.id, x: p.x, y: p.y });
+      if (!p) continue;
+      const ownerId = graph.componentOwning(id);
+      if (ownerId !== undefined) {
+        const componentIndex = componentIndexById.get(ownerId);
+        if (componentIndex !== undefined) {
+          const localId = graph.components.get(ownerId)!.connections.find((c) => c.pointId === id)?.localId;
+          if (localId !== undefined) {
+            portRefs.push({ id, componentIndex, localId });
+            continue;
+          }
+        }
+      }
+      points.push({ id: p.id, x: p.x, y: p.y });
     }
+
     const lines: ClipboardLine[] = [];
     for (const line of graph.lines.values()) {
       if (pointIds.has(line.startId) && pointIds.has(line.endId)) {
@@ -477,7 +513,7 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
     }
 
     if (components.length === 0 && points.length === 0) return;
-    set({ clipboard: { components, points, lines, arcs }, pasteCount: 0 });
+    set({ clipboard: { components, points, lines, arcs, portRefs }, pasteCount: 0 });
   },
 
   pasteSelection: () => {
@@ -510,6 +546,19 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
     // loaded document by fromJSON, so plain `addPoint`/`addLine`/`addArc` calls can't
     // collide with anything already on the canvas).
     const idMap = new Map<Id, Id>();
+
+    // Resolve port links first: a line/arc endpoint that was a component's port at copy
+    // time maps onto the *matching* port of that component's freshly pasted copy (found by
+    // localId — every instance of a symbol shares its ports' localIds, only the pointId is
+    // fresh per placement), so the pasted pipe reconnects to the pasted component exactly
+    // like the original was connected.
+    for (const ref of clipboard.portRefs) {
+      const newComponentId = newComponentIds[ref.componentIndex];
+      const newInstance = newComponentId ? graph.components.get(newComponentId) : undefined;
+      const newPointId = newInstance?.connections.find((c) => c.localId === ref.localId)?.pointId;
+      if (newPointId) idMap.set(ref.id, newPointId);
+    }
+
     const newPointIds: Id[] = [];
     for (const p of clipboard.points) {
       const created = graph.addPoint(p.x + offset, p.y + offset);

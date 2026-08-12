@@ -151,6 +151,61 @@ describe('copySelection / pasteSelection', () => {
     expect(useSketchStore.getState().clipboard?.points).toHaveLength(1);
     expect(useSketchStore.getState().clipboard?.lines).toHaveLength(0);
   });
+
+  it('reconnects a copied line to the pasted copy of the component it was attached to (regression: a line touching a component port used to be dropped from the clipboard entirely)', () => {
+    const { graph, placeComponent } = useSketchStore.getState();
+    placeComponent({ categoryId: 'cat1', realPartId: null, position: { x: 0, y: 0 }, tag: 'V-101', snapshot: sampleSnapshot() });
+    const componentId = [...useSketchStore.getState().selection.componentIds][0];
+    const instance = graph.components.get(componentId)!;
+    const portPointId = instance.connections[0].pointId;
+
+    const free = graph.addPoint(50, 0);
+    const line = graph.addLine(portPointId, free.id)!;
+
+    useSketchStore.setState((s) => ({
+      selection: { ...s.selection, componentIds: new Set([componentId]), lineIds: new Set([line.id]) },
+    }));
+    useSketchStore.getState().copySelection();
+    expect(useSketchStore.getState().clipboard?.lines).toHaveLength(1); // no longer dropped
+    expect(useSketchStore.getState().clipboard?.portRefs).toHaveLength(1);
+    // The port itself isn't duplicated as a free point — only the detached end is.
+    expect(useSketchStore.getState().clipboard?.points).toHaveLength(1);
+
+    useSketchStore.getState().pasteSelection();
+    const { selection } = useSketchStore.getState();
+    const pastedComponentId = [...selection.componentIds][0];
+    const pastedLine = graph.lines.get([...selection.lineIds][0]!)!;
+    const pastedEndIds = [pastedLine.startId, pastedLine.endId];
+
+    // One end of the pasted line is owned by the pasted component (reconnected), the
+    // other is a plain detached point (the original free point's pasted copy).
+    const ownedEnds = pastedEndIds.filter((id) => graph.componentOwning(id) === pastedComponentId);
+    expect(ownedEnds).toHaveLength(1);
+    const pastedInstance = graph.components.get(pastedComponentId)!;
+    expect(pastedInstance.connections.map((c) => c.pointId)).toContain(ownedEnds[0]);
+  });
+
+  it('still copies a line attached to a component port as a (now detached) line when only the line is selected, not the component', () => {
+    const { graph, placeComponent } = useSketchStore.getState();
+    placeComponent({ categoryId: 'cat1', realPartId: null, position: { x: 0, y: 0 }, tag: 'V-101', snapshot: sampleSnapshot() });
+    const componentId = [...useSketchStore.getState().selection.componentIds][0];
+    const portPointId = graph.components.get(componentId)!.connections[0].pointId;
+    const free = graph.addPoint(50, 0);
+    const line = graph.addLine(portPointId, free.id)!;
+
+    useSketchStore.setState((s) => ({ selection: { ...s.selection, componentIds: new Set(), lineIds: new Set([line.id]) } }));
+    useSketchStore.getState().copySelection();
+    expect(useSketchStore.getState().clipboard?.lines).toHaveLength(1);
+    expect(useSketchStore.getState().clipboard?.components).toHaveLength(0);
+    expect(useSketchStore.getState().clipboard?.points).toHaveLength(2); // both ends copied as plain points
+
+    useSketchStore.getState().pasteSelection();
+    const { selection, graph: g } = useSketchStore.getState();
+    const pastedLine = g.lines.get([...selection.lineIds][0]!)!;
+    // Neither end is owned by any component — the original component wasn't copied.
+    expect(g.componentOwning(pastedLine.startId)).toBeUndefined();
+    expect(g.componentOwning(pastedLine.endId)).toBeUndefined();
+  });
 });
 
 describe('setSelection auto-closing the Library panel', () => {
