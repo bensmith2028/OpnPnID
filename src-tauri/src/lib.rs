@@ -218,6 +218,27 @@ fn library_migrations() -> Vec<Migration> {
                 ALTER TABLE attribute_definitions_new RENAME TO attribute_definitions;
             "#,
         },
+        // User-drawn/uploaded symbols, referenced by `categories.symbol_id` (that column
+        // has existed since migration 1 but was always NULL until now — every category
+        // resolved its symbol from the hardcoded subtype/actuation lookup in
+        // src/library/builtinSymbols.ts instead). `geometry` is a JSON-serialized
+        // SymbolGeometry (points/lines/arcs/ports, plus an optional embedded image for
+        // upload-based symbols — see types/geometry.ts). Purely additive: `symbol_id`
+        // has no FK constraint (by original design, so a category can reference a symbol
+        // without forcing insert order / cascade complexity), so this migration is just
+        // a CREATE TABLE — no rebuild-and-migrate-data dance needed like migration 5.
+        Migration {
+            version: 6,
+            description: "create_symbols_table",
+            kind: MigrationKind::Up,
+            sql: r#"
+                CREATE TABLE symbols (
+                    id TEXT PRIMARY KEY,
+                    geometry TEXT NOT NULL,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+            "#,
+        },
     ]
 }
 

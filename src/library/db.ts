@@ -11,7 +11,7 @@
  * `RealPart` (Berkurt X100 — a specific manufacturer/model within a category).
  */
 import Database from '@tauri-apps/plugin-sql';
-import type { ComponentSnapshot, RealPartSnapshot } from '../types/geometry';
+import type { ComponentSnapshot, RealPartSnapshot, SymbolGeometry } from '../types/geometry';
 import { resolveSymbol } from './builtinSymbols';
 
 let dbPromise: Promise<Database> | null = null;
@@ -356,13 +356,62 @@ export async function deleteRealPart(id: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------------
+// Symbols — user-drawn/uploaded, one per category at most (see categories.symbol_id).
+// Built-in valve glyphs and the generic placeholder (builtinSymbols.ts) never touch
+// this table; it only holds symbols made in the in-app symbol editor.
+// ---------------------------------------------------------------------------------
+
+export interface StoredSymbol {
+  id: string;
+  geometry: SymbolGeometry;
+}
+
+interface SymbolRow {
+  id: string;
+  geometry: string;
+}
+
+function rowToStoredSymbol(r: SymbolRow): StoredSymbol {
+  return { id: r.id, geometry: JSON.parse(r.geometry) as SymbolGeometry };
+}
+
+export async function getSymbol(id: string): Promise<StoredSymbol | null> {
+  const db = await getDb();
+  const rows = await db.select<SymbolRow[]>('SELECT * FROM symbols WHERE id = $1', [id]);
+  return rows[0] ? rowToStoredSymbol(rows[0]) : null;
+}
+
+/** Saves a symbol (insert if `id` is omitted, overwrite in place otherwise — the symbol
+ * editor always overwrites the same row for a given category rather than accumulating
+ * orphaned versions, since nothing but that category's `symbol_id` ever points at it). */
+export async function upsertSymbol(input: { id?: string; geometry: SymbolGeometry }): Promise<StoredSymbol> {
+  const db = await getDb();
+  const id = input.id ?? newId('sym');
+  const geometry = JSON.stringify(input.geometry);
+  await db.execute(
+    `INSERT INTO symbols (id, geometry, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP)
+     ON CONFLICT(id) DO UPDATE SET geometry = $2, updated_at = CURRENT_TIMESTAMP`,
+    [id, geometry],
+  );
+  return { id, geometry: input.geometry };
+}
+
+export async function deleteSymbol(id: string): Promise<void> {
+  const db = await getDb();
+  await db.execute('DELETE FROM symbols WHERE id = $1', [id]);
+}
+
+// ---------------------------------------------------------------------------------
 // Snapshot helper — used when placing/re-assigning a component on the canvas
 // ---------------------------------------------------------------------------------
 
 /** Builds the portable snapshot embedded in a placed ComponentInstance (see
  * types/geometry.ts) from current library data, resolving and embedding the
- * category's vector symbol. Returns null if the category no longer exists
- * (shouldn't normally happen from UI flows that just looked it up). */
+ * category's symbol. A category's own stored symbol (`symbol_id`, made in the symbol
+ * editor) always wins when present; otherwise falls back to the hardcoded
+ * subtype/actuation lookup (or the generic placeholder) via `resolveSymbol`. Returns
+ * null if the category no longer exists (shouldn't normally happen from UI flows that
+ * just looked it up). */
 export async function buildComponentSnapshot(categoryId: string, realPartId: string | null): Promise<ComponentSnapshot | null> {
   const category = await getCategory(categoryId);
   if (!category) return null;
@@ -372,6 +421,7 @@ export async function buildComponentSnapshot(categoryId: string, realPartId: str
     const rp = await getRealPart(realPartId);
     if (rp) realPart = { manufacturer: rp.manufacturer, modelNumber: rp.modelNumber, datasheetUrl: rp.datasheetUrl ?? undefined, specs: rp.specs };
   }
-  const symbol = resolveSymbol(category.subtype, category.actuation, category.portCount);
+  const stored = category.symbolId ? await getSymbol(category.symbolId) : null;
+  const symbol = stored ? stored.geometry : resolveSymbol(category.subtype, category.actuation, category.portCount);
   return { familyName: family?.name ?? 'Unknown', categoryName: category.name, symbol, realPart };
 }

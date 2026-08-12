@@ -66,6 +66,19 @@ export interface SymbolArc {
   bulge: number;
 }
 
+/** An uploaded raster image used as a symbol's body, drawn centered at the symbol's
+ * local origin at `width`x`height` local units (same unscaled coordinate space as
+ * `SymbolGeometry.points`) — ports are still ordinary points the user places by
+ * clicking on the rendered image in the symbol editor, so nothing downstream needs to
+ * know whether a symbol is image- or vector-based. */
+export interface SymbolImage {
+  /** A `data:` URL (the image is embedded, not referenced by path, so symbols stay
+   * portable the same way ComponentSnapshot already is). */
+  dataUrl: string;
+  width: number;
+  height: number;
+}
+
 /**
  * A category's visual, in local/unscaled coordinates — a self-contained little scene
  * graph (points + lines + optional arcs, same shape as the sketch engine's own
@@ -73,13 +86,18 @@ export interface SymbolArc {
  * SceneGraph.addComponent/moveComponent know where to put each `ComponentConnection`).
  * Built-in vector symbols and the generic N-port placeholder (for categories without a
  * hand-built one yet) are both just values of this type — see
- * `library/builtinSymbols.ts`'s `resolveSymbol`.
+ * `library/builtinSymbols.ts`'s `resolveSymbol`. A category can also have a
+ * user-drawn/uploaded symbol stored in the `symbols` DB table (see `db.ts`'s
+ * `getSymbol`/`upsertSymbol`), which takes priority when present (see
+ * `buildComponentSnapshot`) — `image` is optional on all three kinds so lines/arcs and
+ * an image can in principle coexist, though the symbol editor only ever populates one.
  */
 export interface SymbolGeometry {
   points: Record<string, Vec2>;
   lines: [string, string][];
   arcs: SymbolArc[];
   ports: string[];
+  image?: SymbolImage;
 }
 
 /** A snapshot of the library data a placed instance referenced, embedded so the project
