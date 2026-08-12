@@ -257,26 +257,59 @@ pub fn run() {
             // macOS-only: without *some* native window menu present, macOS never routes
             // Cmd+C/V/X/Z/A (and friends) to the webview at all — a long-standing,
             // widely-reported Tauri/WKWebView limitation (see e.g. tauri-apps/tauri
-            // issues #2397, #2819, #12458), not a bug in this app's own keydown
-            // handling. The app's own JS (SketchCanvas.tsx, SymbolEditor.tsx) still owns
-            // the actual copy/paste/undo/redo *behavior* via its own keydown listeners —
-            // this menu exists purely so macOS delivers the keystroke to the window in
-            // the first place. Windows/Linux webview engines don't have this limitation,
-            // so skip adding a menu bar there that nobody asked for.
+            // issues #2397, #2819, #12458). Windows/Linux webview engines don't have
+            // this limitation, so skip adding a menu bar there that nobody asked for.
+            //
+            // These are deliberately *custom* items, not the predefined `.copy()`/
+            // `.paste()`/etc. roles. A predefined role hands the accelerator straight to
+            // AppKit's native NSResponder chain (`copy:`/`paste:`/...), which is a no-op
+            // for anything that isn't native DOM text selection — exactly the case for
+            // the schematic canvas and symbol editor, which keep their own in-memory
+            // clipboard/undo stacks. Because a menu item's key equivalent is consumed by
+            // AppKit *before* it would ever become a `keydown` in the webview, a
+            // predefined role also permanently starves any JS keydown handler for that
+            // same shortcut — which is what silently broke canvas copy/paste the first
+            // time this menu was added. So instead each item here just re-emits an
+            // `app-menu` event to the frontend (see src/platform/menuBridge.ts), which
+            // decides what to do based on what's actually focused: a real text field
+            // still gets standard editing behavior, anything else routes to the app's
+            // own copy/paste/undo/redo.
             #[cfg(target_os = "macos")]
             {
-                use tauri::menu::{MenuBuilder, SubmenuBuilder};
+                use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+                use tauri::Emitter;
+
+                let undo = MenuItemBuilder::with_id("menu-undo", "Undo").accelerator("CmdOrCtrl+Z").build(app)?;
+                let redo = MenuItemBuilder::with_id("menu-redo", "Redo").accelerator("CmdOrCtrl+Shift+Z").build(app)?;
+                let cut = MenuItemBuilder::with_id("menu-cut", "Cut").accelerator("CmdOrCtrl+X").build(app)?;
+                let copy = MenuItemBuilder::with_id("menu-copy", "Copy").accelerator("CmdOrCtrl+C").build(app)?;
+                let paste = MenuItemBuilder::with_id("menu-paste", "Paste").accelerator("CmdOrCtrl+V").build(app)?;
+                let select_all = MenuItemBuilder::with_id("menu-select-all", "Select All").accelerator("CmdOrCtrl+A").build(app)?;
+
                 let edit_menu = SubmenuBuilder::new(app, "Edit")
-                    .undo()
-                    .redo()
+                    .item(&undo)
+                    .item(&redo)
                     .separator()
-                    .cut()
-                    .copy()
-                    .paste()
-                    .select_all()
+                    .item(&cut)
+                    .item(&copy)
+                    .item(&paste)
+                    .item(&select_all)
                     .build()?;
                 let menu = MenuBuilder::new(app).item(&edit_menu).build()?;
                 app.set_menu(menu)?;
+
+                app.on_menu_event(move |app_handle, event| {
+                    let action = match event.id().as_ref() {
+                        "menu-undo" => "undo",
+                        "menu-redo" => "redo",
+                        "menu-cut" => "cut",
+                        "menu-copy" => "copy",
+                        "menu-paste" => "paste",
+                        "menu-select-all" => "selectAll",
+                        _ => return,
+                    };
+                    let _ = app_handle.emit("app-menu", action);
+                });
             }
             Ok(())
         })

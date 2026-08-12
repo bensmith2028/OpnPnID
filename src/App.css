@@ -164,6 +164,7 @@ body {
   border-left: 1px solid var(--border);
   padding: 16px;
   overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .properties-panel--empty {
@@ -337,6 +338,8 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .library-header h3 {
@@ -419,6 +422,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 4px;
   border: none;
   border-bottom: 1px solid var(--border);
   padding: 4px 2px;
@@ -430,14 +434,30 @@ body {
   border-bottom: none;
 }
 
+/* The label sits in its own shrinkable/truncatable box so a long manufacturer/model
+   string wraps its row's action buttons onto the next line instead of forcing the whole
+   panel to scroll horizontally. */
+.library-list--compact li > span {
+  min-width: 0;
+  overflow-wrap: break-word;
+}
+
+.library-list--compact li > div {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
 .library-list-row {
   display: flex;
   align-items: center;
   gap: 4px;
+  flex-wrap: wrap;
 }
 
 .library-list-name {
-  flex: 1;
+  flex: 1 1 auto;
+  min-width: 40px;
   text-align: left;
   background: transparent;
   color: var(--text);
@@ -445,6 +465,9 @@ body {
   padding: 4px;
   font-size: 13px;
   cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .library-muted {
@@ -462,11 +485,27 @@ body {
   font-size: 11px;
   cursor: pointer;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .library-list-row button:hover,
 .library-list--compact li button:hover {
   background: var(--bg-button-hover);
+}
+
+/* Compact square glyph buttons (Edit Drawing's pencil, Delete's trash can) — used instead
+   of spelling the action out, which was the main thing crowding each row and forcing a
+   horizontal scrollbar in the (fairly narrow, fixed-width) library panel. The action is
+   still named in full via `title` for anyone hovering. */
+.library-icon-button {
+  padding: 3px 6px !important;
+  font-size: 12px !important;
+  line-height: 1;
+}
+
+.library-icon-button--danger {
+  color: var(--error) !important;
+  border-color: var(--error) !important;
 }
 
 .library-add-row {

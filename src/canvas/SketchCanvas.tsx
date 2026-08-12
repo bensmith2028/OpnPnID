@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
+import { isSymbolEditorOpen } from '../library/symbolEditorActive';
+import { applyTextFieldMenuAction, isTextEditableFocus, onNativeMenuAction } from '../platform/menuBridge';
 import { render } from './renderer';
 import { useSketchStore } from './store/useSketchStore';
 import type { ToolCtx } from './tools/drawLineTool';
@@ -196,10 +198,12 @@ export function SketchCanvas() {
   }, []);
 
   // Keyboard shortcuts: Escape, Delete, Undo/Redo, Copy/Paste (selected components),
-  // Space-to-pan, Alt-to-disable-snap. Copy/Paste use a plain Ctrl/Cmd+C|V keydown check
-  // (not the browser's `copy`/`paste` clipboard events — those turned out not to fire
-  // reliably for a canvas-focused, no-text-selection gesture in this app's webview, even
-  // though the same keydown-based approach works fine here and in the symbol editor).
+  // Space-to-pan, Alt-to-disable-snap. Undo/Redo/Copy/Paste are also handled here via a
+  // plain Ctrl/Cmd+Z|Y|C|V keydown check — this is the *only* path on Windows/Linux, and
+  // still a live fallback on macOS for Cmd+Y (redo), which isn't bound to a native menu
+  // item below. Cmd+Z/C/V *are* claimed by the native Edit menu on macOS (see the
+  // `onNativeMenuAction` effect below), so AppKit consumes those accelerators before they'd
+  // ever reach this handler as a keydown there — no double-handling in practice.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
@@ -253,6 +257,29 @@ export function SketchCanvas() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTool]);
+
+  // Native macOS Edit-menu bridge (see src-tauri/src/lib.rs + src/platform/menuBridge.ts).
+  // Undo/Redo/Cut/Copy/Paste/Select All arrive here as `app-menu` events instead of
+  // `keydown` on macOS. Defers entirely to the symbol editor's own bridge listener while
+  // that modal is open on top, so the same menu click doesn't get handled twice.
+  useEffect(
+    () =>
+      onNativeMenuAction((action) => {
+        if (isTextEditableFocus()) {
+          applyTextFieldMenuAction(action);
+          return;
+        }
+        if (isSymbolEditorOpen()) return;
+        const store = useSketchStore.getState();
+        if (action === 'copy') store.copySelectedComponents();
+        else if (action === 'paste') store.pasteComponents();
+        else if (action === 'undo') store.undo();
+        else if (action === 'redo') store.redo();
+        else if (action === 'selectAll') store.selectAll();
+        // 'cut' isn't a supported gesture on the main canvas today.
+      }),
+    [],
+  );
 
   return (
     <div ref={containerRef} className="sketch-canvas-container">

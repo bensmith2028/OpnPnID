@@ -77,11 +77,21 @@ export function CategorySection({ familyId, editMode }: { familyId: string; edit
                 Place
               </button>
               {/* Not gated behind editMode: editing a drawing is non-destructive (it
-                  overwrites only this category's own symbol row), unlike Delete. */}
-              <button onClick={() => setSymbolEditorFor(c)} title="Draw or upload this category's symbol and mark its connection ports">
-                Edit Drawing
+                  overwrites only this category's own symbol row), unlike Delete. Icon
+                  instead of the full "Edit Drawing" label — that was the single biggest
+                  contributor to this row overflowing the (fixed-width) library panel. */}
+              <button
+                className="library-icon-button"
+                onClick={() => setSymbolEditorFor(c)}
+                title="Edit Drawing — draw or upload this category's symbol and mark its connection ports"
+              >
+                ✎
               </button>
-              {editMode && <button onClick={() => void removeCategory(c.id, c.name)}>Delete</button>}
+              {editMode && (
+                <button className="library-icon-button library-icon-button--danger" onClick={() => void removeCategory(c.id, c.name)} title="Delete category">
+                  🗑
+                </button>
+              )}
             </div>
             {expandedId === c.id && <AttributeDefinitionsEditor categoryId={c.id} editMode={editMode} />}
           </li>
@@ -174,7 +184,11 @@ function AttributeDefinitionsEditor({ categoryId, editMode }: { categoryId: stri
               <span>
                 {a.label} <span className="library-muted">({a.key}, {a.type}{a.unit ? `, ${a.unit}` : ''})</span>
               </span>
-              {editMode && <button onClick={() => void removeAttr(a.id)}>Remove</button>}
+              {editMode && (
+                <button className="library-icon-button library-icon-button--danger" onClick={() => void removeAttr(a.id)} title="Remove attribute">
+                  🗑
+                </button>
+              )}
             </li>
           ))}
         </ul>

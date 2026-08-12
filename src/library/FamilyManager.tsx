@@ -49,8 +49,12 @@ export function FamilyManager({ families, onChange, editMode }: { families: db.F
                 {f.name} {f.tagLetter ? <span className="library-muted">({f.tagLetter})</span> : null}
               </span>
               {editMode && (
-                <button onClick={() => void removeFamily(f.id, f.name)} title="Deletes the family and everything in it">
-                  Delete
+                <button
+                  className="library-icon-button library-icon-button--danger"
+                  onClick={() => void removeFamily(f.id, f.name)}
+                  title="Delete family — deletes the family and everything in it"
+                >
+                  🗑
                 </button>
               )}
             </div>

@@ -154,8 +154,14 @@ export function RealPartSection({
                 {p.manufacturer} {p.modelNumber}
               </span>
               <div>
-                <button onClick={() => onSelect(p.id)}>Use This Part</button>
-                {editMode && <button onClick={() => void removePart(p.id)}>Delete</button>}
+                <button onClick={() => onSelect(p.id)} title="Use this part">
+                  Use
+                </button>
+                {editMode && (
+                  <button className="library-icon-button library-icon-button--danger" onClick={() => void removePart(p.id)} title="Delete real part">
+                    🗑
+                  </button>
+                )}
               </div>
             </li>
           ))}

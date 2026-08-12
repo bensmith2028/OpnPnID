@@ -110,3 +110,27 @@ describe('setSelection auto-closing the Library panel', () => {
     expect(useSketchStore.getState().libraryPanelOpen).toBe(false);
   });
 });
+
+describe('selectAll', () => {
+  it('selects every point, line, arc and component in the document', () => {
+    const { placeComponent, graph } = useSketchStore.getState();
+    placeComponent({ categoryId: 'cat1', realPartId: null, position: { x: 0, y: 0 }, tag: 'V-101', snapshot: sampleSnapshot() });
+    graph.addPoint(5, 5);
+    const [a, b] = [graph.addPoint(0, 10), graph.addPoint(10, 10)];
+    graph.addLine(a.id, b.id);
+
+    useSketchStore.getState().selectAll();
+    const { selection } = useSketchStore.getState();
+    expect(selection.componentIds.size).toBe(1);
+    expect(selection.pointIds.size).toBe(graph.points.size);
+    expect(selection.lineIds.size).toBe(graph.lines.size);
+  });
+
+  it('closes the Library panel, same as any other non-empty selection', () => {
+    useSketchStore.setState({ libraryPanelOpen: true });
+    useSketchStore.getState().placeComponent({ categoryId: 'cat1', realPartId: null, position: { x: 0, y: 0 }, tag: 'V-101', snapshot: sampleSnapshot() });
+    useSketchStore.setState({ libraryPanelOpen: true }); // placeComponent bypasses the auto-close; reset for this test
+    useSketchStore.getState().selectAll();
+    expect(useSketchStore.getState().libraryPanelOpen).toBe(false);
+  });
+});

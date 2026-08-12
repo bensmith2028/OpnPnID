@@ -28,10 +28,12 @@ import {
 } from '../canvas/geometry';
 import { SceneGraph } from '../canvas/sceneGraph';
 import { computeSnap } from '../canvas/snapping';
+import { applyTextFieldMenuAction, isTextEditableFocus, onNativeMenuAction } from '../platform/menuBridge';
 import type { Id, SceneGraphJSON, SymbolGeometry, Vec2 } from '../types/geometry';
 import { resolveSymbol } from './builtinSymbols';
 import * as db from './db';
 import { describeError } from './errors';
+import { markSymbolEditorClosed, markSymbolEditorOpen } from './symbolEditorActive';
 
 const CANVAS_PX = 560;
 /** Fixed zoom: visible range is CANVAS_PX / 2 / PX_PER_UNIT = ±28 local units. Sized for
@@ -731,6 +733,34 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
     tool,
     undo,
   ]);
+
+  // Marks itself open for as long as this modal is mounted, so the main canvas's own
+  // native-menu bridge listener (SketchCanvas.tsx) knows to defer to this one below instead
+  // of double-handling the same click — see symbolEditorActive.ts.
+  useEffect(() => {
+    markSymbolEditorOpen();
+    return () => markSymbolEditorClosed();
+  }, []);
+
+  // Native macOS Edit-menu bridge (see src-tauri/src/lib.rs + src/platform/menuBridge.ts).
+  // Cmd+C/V/Z/Shift+Z arrive here as `app-menu` events instead of `keydown` on macOS, for
+  // the same reason as (and alongside) the capture-phase keydown handler above.
+  useEffect(
+    () =>
+      onNativeMenuAction((action) => {
+        if (isTextEditableFocus()) {
+          applyTextFieldMenuAction(action);
+          return;
+        }
+        if (tab !== 'draw') return;
+        if (action === 'copy') copySelection();
+        else if (action === 'paste') pasteClipboard();
+        else if (action === 'undo') undo();
+        else if (action === 'redo') redo();
+        // 'cut' and 'selectAll' aren't supported gestures in the symbol editor today.
+      }),
+    [copySelection, pasteClipboard, redo, tab, undo],
+  );
 
   // ------------------------------------------------------------------ Draw tab canvas
 

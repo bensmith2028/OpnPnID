@@ -118,6 +118,8 @@ interface SketchStoreState {
   setTheme: (theme: Theme) => void;
   toggleTheme: () => void;
   clearSelection: () => void;
+  /** Selects every point, line, arc and component currently in the document (Cmd/Ctrl+A). */
+  selectAll: () => void;
   setGridSize: (size: number) => void;
   setGridVisible: (visible: boolean) => void;
   setSnapThresholdPx: (px: number) => void;
@@ -218,6 +220,15 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
   },
   toggleTheme: () => get().setTheme(get().theme === 'dark' ? 'light' : 'dark'),
   clearSelection: () => set({ selection: emptySelection() }),
+  selectAll: () => {
+    const { graph } = get();
+    get().setSelection({
+      pointIds: new Set(graph.points.keys()),
+      lineIds: new Set(graph.lines.keys()),
+      arcIds: new Set(graph.arcs.keys()),
+      componentIds: new Set(graph.components.keys()),
+    });
+  },
   setGridSize: (size) => set({ gridSize: Math.max(0.1, size) }),
   setGridVisible: (visible) => set({ gridVisible: visible }),
   setSnapThresholdPx: (px) => set({ snapThresholdPx: Math.max(0, px) }),
