@@ -253,6 +253,33 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            // macOS-only: without *some* native window menu present, macOS never routes
+            // Cmd+C/V/X/Z/A (and friends) to the webview at all — a long-standing,
+            // widely-reported Tauri/WKWebView limitation (see e.g. tauri-apps/tauri
+            // issues #2397, #2819, #12458), not a bug in this app's own keydown
+            // handling. The app's own JS (SketchCanvas.tsx, SymbolEditor.tsx) still owns
+            // the actual copy/paste/undo/redo *behavior* via its own keydown listeners —
+            // this menu exists purely so macOS delivers the keystroke to the window in
+            // the first place. Windows/Linux webview engines don't have this limitation,
+            // so skip adding a menu bar there that nobody asked for.
+            #[cfg(target_os = "macos")]
+            {
+                use tauri::menu::{MenuBuilder, SubmenuBuilder};
+                let edit_menu = SubmenuBuilder::new(app, "Edit")
+                    .undo()
+                    .redo()
+                    .separator()
+                    .cut()
+                    .copy()
+                    .paste()
+                    .select_all()
+                    .build()?;
+                let menu = MenuBuilder::new(app).item(&edit_menu).build()?;
+                app.set_menu(menu)?;
+            }
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
