@@ -15,6 +15,12 @@ dist-ssr
 # Rust build artifacts
 src-tauri/target
 
+# Organization component library data (families/categories/symbols/real parts +
+# catalog-import staging). Source of truth for this lives outside the app's source
+# repo — see src/library/libraryRoot.ts — and is distributed however your org
+# distributes it (shared drive, cloud sync, its own private repo), never via this repo.
+library-data/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

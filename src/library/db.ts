@@ -13,11 +13,31 @@
 import Database from '@tauri-apps/plugin-sql';
 import type { ComponentSnapshot, RealPartSnapshot, SymbolGeometry } from '../types/geometry';
 import { resolveSymbol } from './builtinSymbols';
+import * as fileStore from './fileStore';
+import { getLibraryRoot, isWriteThroughSuppressed } from './libraryRoot';
 
 let dbPromise: Promise<Database> | null = null;
 function getDb(): Promise<Database> {
   if (!dbPromise) dbPromise = Database.load('sqlite:library.db');
   return dbPromise;
+}
+
+/** Mirrors a sqlite mutation out to the connected library-data folder (see
+ * `libraryRoot.ts`), keeping the file tree — the thing that's actually shared/synced
+ * across an organization — current with every in-app edit. A no-op whenever no folder
+ * is connected (the app works exactly as it did before this existed) or while
+ * `librarySync` is applying the opposite direction. File I/O failures are logged, not
+ * thrown: sqlite is already committed by the time this runs, so surfacing a write-
+ * through failure as if the edit itself failed would be misleading. */
+async function writeThrough(fn: (root: string) => Promise<void>): Promise<void> {
+  if (isWriteThroughSuppressed()) return;
+  const root = getLibraryRoot();
+  if (!root) return;
+  try {
+    await fn(root);
+  } catch (e) {
+    console.warn('Library file write-through failed (sqlite already updated):', e);
+  }
 }
 
 function newId(prefix: string): string {
@@ -104,7 +124,9 @@ export async function upsertFamily(input: { id?: string; name: string; tagLetter
      ON CONFLICT(id) DO UPDATE SET name = $2, tag_letter = $3, sort_order = $4`,
     [id, input.name, input.tagLetter, sortOrder],
   );
-  return { id, name: input.name, tagLetter: input.tagLetter, sortOrder };
+  const result = { id, name: input.name, tagLetter: input.tagLetter, sortOrder };
+  await writeThrough((root) => fileStore.writeFamily(root, result));
+  return result;
 }
 
 /** Cascades to that family's categories, and from there to their attribute
@@ -114,6 +136,7 @@ export async function upsertFamily(input: { id?: string; name: string; tagLetter
 export async function deleteFamily(id: string): Promise<void> {
   const db = await getDb();
   await db.execute('DELETE FROM families WHERE id = $1', [id]);
+  await writeThrough((root) => fileStore.removeFamily(root, id));
 }
 
 // ---------------------------------------------------------------------------------
@@ -177,7 +200,9 @@ export async function upsertCategory(input: {
      ON CONFLICT(id) DO UPDATE SET family_id=$2, name=$3, subtype=$4, actuation=$5, port_count=$6, symbol_id=$7`,
     [id, input.familyId, input.name, subtype, actuation, portCount, symbolId],
   );
-  return { id, familyId: input.familyId, name: input.name, subtype, actuation, portCount, symbolId };
+  const result = { id, familyId: input.familyId, name: input.name, subtype, actuation, portCount, symbolId };
+  await writeThrough(async (root) => fileStore.writeCategory(root, result, await listAttributeDefinitions(id)));
+  return result;
 }
 
 /** Cascades to that category's attribute definitions and real parts (ON DELETE
@@ -185,6 +210,7 @@ export async function upsertCategory(input: {
 export async function deleteCategory(id: string): Promise<void> {
   const db = await getDb();
   await db.execute('DELETE FROM categories WHERE id = $1', [id]);
+  await writeThrough((root) => fileStore.removeCategory(root, id));
 }
 
 // ---------------------------------------------------------------------------------
@@ -249,12 +275,26 @@ export async function upsertAttributeDefinition(input: {
      ON CONFLICT(id) DO UPDATE SET category_id=$2, key=$3, label=$4, type=$5, unit=$6, options=$7, required=$8, sort_order=$9`,
     [id, input.categoryId, input.key, input.label, input.type, unit, options ? JSON.stringify(options) : null, required ? 1 : 0, sortOrder],
   );
-  return { id, categoryId: input.categoryId, key: input.key, label: input.label, type: input.type, unit, options, required, sortOrder };
+  const result = { id, categoryId: input.categoryId, key: input.key, label: input.label, type: input.type, unit, options, required, sortOrder };
+  await writeThrough((root) => writeThroughCategoryFile(root, input.categoryId));
+  return result;
 }
 
 export async function deleteAttributeDefinition(id: string): Promise<void> {
   const db = await getDb();
+  const rows = await db.select<{ category_id: string }[]>('SELECT category_id FROM attribute_definitions WHERE id = $1', [id]);
+  const categoryId = rows[0]?.category_id;
   await db.execute('DELETE FROM attribute_definitions WHERE id = $1', [id]);
+  if (categoryId) await writeThrough((root) => writeThroughCategoryFile(root, categoryId));
+}
+
+/** Attribute definitions are embedded in their owning category's file (see
+ * `fileStore.writeCategory`), so any add/remove has to rewrite the whole category file
+ * with the current attribute list rather than touching its own file. */
+async function writeThroughCategoryFile(root: string, categoryId: string): Promise<void> {
+  const category = await getCategory(categoryId);
+  if (!category) return;
+  await fileStore.writeCategory(root, category, await listAttributeDefinitions(categoryId));
 }
 
 // ---------------------------------------------------------------------------------
@@ -324,6 +364,7 @@ export async function upsertRealPart(input: {
 }): Promise<RealPart> {
   const db = await getDb();
   const id = input.id ?? newId('rp');
+  const previous = input.id ? await getRealPart(input.id) : null;
   const description = input.description ?? null;
   const datasheetUrl = input.datasheetUrl ?? null;
   const imageUrl = input.imageUrl ?? null;
@@ -336,7 +377,7 @@ export async function upsertRealPart(input: {
      ON CONFLICT(id) DO UPDATE SET category_id=$2, manufacturer=$3, model_number=$4, description=$5, datasheet_url=$6, image_url=$7, price=$8, currency=$9, specs=$10`,
     [id, input.categoryId, input.manufacturer, input.modelNumber, description, datasheetUrl, imageUrl, price, currency, JSON.stringify(specs)],
   );
-  return {
+  const result = {
     id,
     categoryId: input.categoryId,
     manufacturer: input.manufacturer,
@@ -348,11 +389,16 @@ export async function upsertRealPart(input: {
     currency,
     specs,
   };
+  await writeThrough((root) => fileStore.writePart(root, result, previous?.categoryId));
+  return result;
 }
 
 export async function deleteRealPart(id: string): Promise<void> {
   const db = await getDb();
+  const rows = await db.select<{ category_id: string }[]>('SELECT category_id FROM real_parts WHERE id = $1', [id]);
+  const categoryId = rows[0]?.category_id;
   await db.execute('DELETE FROM real_parts WHERE id = $1', [id]);
+  if (categoryId) await writeThrough((root) => fileStore.removePart(root, categoryId, id));
 }
 
 // ---------------------------------------------------------------------------------
@@ -393,12 +439,15 @@ export async function upsertSymbol(input: { id?: string; geometry: SymbolGeometr
      ON CONFLICT(id) DO UPDATE SET geometry = $2, updated_at = CURRENT_TIMESTAMP`,
     [id, geometry],
   );
-  return { id, geometry: input.geometry };
+  const result = { id, geometry: input.geometry };
+  await writeThrough((root) => fileStore.writeSymbol(root, result));
+  return result;
 }
 
 export async function deleteSymbol(id: string): Promise<void> {
   const db = await getDb();
   await db.execute('DELETE FROM symbols WHERE id = $1', [id]);
+  await writeThrough((root) => fileStore.removeSymbol(root, id));
 }
 
 // ---------------------------------------------------------------------------------
