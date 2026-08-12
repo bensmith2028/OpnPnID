@@ -28,7 +28,7 @@ import {
 } from '../canvas/geometry';
 import { SceneGraph } from '../canvas/sceneGraph';
 import { computeSnap } from '../canvas/snapping';
-import type { Id, SymbolGeometry, Vec2 } from '../types/geometry';
+import type { Id, SceneGraphJSON, SymbolGeometry, Vec2 } from '../types/geometry';
 import { resolveSymbol } from './builtinSymbols';
 import * as db from './db';
 import { describeError } from './errors';
@@ -50,11 +50,14 @@ const DEFAULT_IMAGE_WIDTH = 28;
 const PASTE_OFFSET = 2;
 
 type EditorTab = 'draw' | 'image';
-type DrawTool = 'point' | 'line' | 'arc' | 'circle' | 'select';
+/** Same order as the main app's own toolbar (Toolbar.tsx) — Select, Line, Arc, Point,
+ * Circle — so the two tool rows read as the same tool set, not a different order to
+ * relearn just because this modal is open. */
+type DrawTool = 'select' | 'line' | 'arc' | 'point' | 'circle';
 /** Hotkeys deliberately mirror the main app's own tool letters (see SketchCanvas's key
  * handler) — muscle memory shouldn't change just because this modal is open. */
-const TOOL_HOTKEYS: Record<DrawTool, string> = { point: 'P', line: 'L', arc: 'A', circle: 'C', select: 'V' };
-const HOTKEY_TOOLS: Record<string, DrawTool> = { p: 'point', l: 'line', a: 'arc', c: 'circle', v: 'select' };
+const TOOL_HOTKEYS: Record<DrawTool, string> = { select: 'V', line: 'L', arc: 'A', point: 'P', circle: 'C' };
+const HOTKEY_TOOLS: Record<string, DrawTool> = { v: 'select', l: 'line', a: 'arc', p: 'point', c: 'circle' };
 
 /** What one click landed on — the atom a selection is built from. */
 type DrawHit = { kind: 'point' | 'line' | 'arc'; id: Id } | null;
@@ -80,6 +83,29 @@ interface LocalRect {
   y0: number;
   x1: number;
   y1: number;
+}
+
+/** Undo/redo unit: the whole editing session's state that isn't recoverable from the
+ * graph alone. `ports` lives in React state, not the graph, so it has to travel with
+ * every snapshot alongside the graph's own point/line/arc content. */
+interface EditorSnapshot {
+  scene: SceneGraphJSON;
+  ports: string[];
+}
+
+function snapshotsEqual(a: EditorSnapshot, b: EditorSnapshot): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/** An in-progress drag of one or more points (Select tool). `singlePointId` is set only
+ * when dragging exactly one point directly — that's the one case with an unambiguous
+ * "point being moved" to run a full grid+endpoint snap search against; a group/edge drag
+ * instead quantizes the raw pointer delta to the grid (see quantizeDelta). */
+interface GroupDrag {
+  grabLocal: Vec2;
+  pointOrigins: Map<Id, Vec2>;
+  singlePointId: Id | null;
+  before: EditorSnapshot;
 }
 
 function emptySelection(): DrawSelection {
@@ -113,6 +139,15 @@ function circleArcEndpoints(center: Vec2, rim: Vec2): { radius: number; a: Vec2;
     a: { x: rim.x, y: rim.y },
     b: { x: 2 * center.x - rim.x, y: 2 * center.y - rim.y },
   };
+}
+
+/** Rounds a pointer-drag delta to the nearest grid multiple on each axis — used for
+ * group/edge drags, where (unlike a single dragged point) there's no one point to run an
+ * endpoint/grid snap search against, so the whole group instead snaps as a unit by
+ * quantizing how far it moved. */
+function quantizeDelta(dx: number, dy: number, gridSize: number): Vec2 {
+  if (gridSize <= 0) return { x: dx, y: dy };
+  return { x: Math.round(dx / gridSize) * gridSize, y: Math.round(dy / gridSize) * gridSize };
 }
 
 /** A port placed on an uploaded image. Image symbols have no other geometry, so every
@@ -328,13 +363,11 @@ function selectInsideRect(graph: SceneGraph, rect: LocalRect, base: DrawSelectio
   return next;
 }
 
-/**
- * The clipboard payload for a selection. Edges come along when both their endpoints are
- * copied — selecting two connected points and copying should bring their connector, which
- * is what a user means by "copy these". Explicitly selected edges pull their own endpoints
- * in first, so selecting just a line copies a usable line rather than nothing.
- */
-function clipboardFromSelection(graph: SceneGraph, sel: DrawSelection): DrawClipboard | null {
+/** Every point id referenced by a selection, directly or via a selected line/arc's
+ * endpoints — shared by copy (clipboardFromSelection) and dragging a selection as a
+ * group (a selected edge's endpoints move with it even though the edge itself isn't a
+ * point). */
+function selectionPointIds(graph: SceneGraph, sel: DrawSelection): Set<Id> {
   const pointIds = new Set(sel.points);
   for (const id of sel.lines) {
     const line = graph.lines.get(id);
@@ -350,6 +383,17 @@ function clipboardFromSelection(graph: SceneGraph, sel: DrawSelection): DrawClip
       pointIds.add(arc.endId);
     }
   }
+  return pointIds;
+}
+
+/**
+ * The clipboard payload for a selection. Edges come along when both their endpoints are
+ * copied — selecting two connected points and copying should bring their connector, which
+ * is what a user means by "copy these". Explicitly selected edges pull their own endpoints
+ * in first, so selecting just a line copies a usable line rather than nothing.
+ */
+function clipboardFromSelection(graph: SceneGraph, sel: DrawSelection): DrawClipboard | null {
+  const pointIds = selectionPointIds(graph, sel);
 
   const points = [...pointIds]
     .map((id) => graph.points.get(id))
@@ -375,7 +419,11 @@ function formatUnits(value: number): string {
 
 export function SymbolEditor({ category, onClose, onSaved }: { category: db.Category; onClose: () => void; onSaved: () => void }) {
   // One isolated graph per editor session — deliberately NOT the app's document graph;
-  // this is a throwaway scratch scene that only ever becomes a SymbolGeometry.
+  // this is a throwaway scratch scene that only ever becomes a SymbolGeometry. Undo/redo
+  // reassigns graphRef.current wholesale (see undo/redo below), so every other read of
+  // the graph inside this component goes through the `graph` const re-derived each
+  // render — only undo/redo itself needs to read graphRef.current directly, since it's
+  // a stable (rarely-recreated) callback that must never operate on a stale reference.
   const graphRef = useRef<SceneGraph | null>(null);
   const graph = (graphRef.current ??= new SceneGraph());
 
@@ -388,7 +436,7 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
   const [version, setVersion] = useState(0);
   const bump = () => setVersion((v) => v + 1);
 
-  const [tool, setTool] = useState<DrawTool>('point');
+  const [tool, setTool] = useState<DrawTool>('select');
   const [selection, setSelection] = useState<DrawSelection>(emptySelection);
   const [pendingLine, setPendingLine] = useState<Id | null>(null);
   const [pendingArc, setPendingArc] = useState<{ startId: Id; endId: Id | null } | null>(null);
@@ -399,11 +447,40 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
   const [circleCursor, setCircleCursor] = useState<Vec2 | null>(null);
   /** In-flight marquee drag (Select tool on empty space); null when not dragging. */
   const [marquee, setMarquee] = useState<{ origin: Vec2; current: Vec2; additive: boolean } | null>(null);
+  /** In-flight point/edge/group drag (Select tool on a hit); null when not dragging. */
+  const [groupDrag, setGroupDrag] = useState<GroupDrag | null>(null);
   const [clipboard, setClipboard] = useState<DrawClipboard | null>(null);
   /** How many times the current clipboard has been pasted, so repeats cascade instead of
    * stacking on top of each other. Reset by every copy. */
   const [pasteCount, setPasteCount] = useState(0);
   const [ports, setPorts] = useState<string[]>([]);
+  /** Mirrors `ports` synchronously (state updates aren't visible until the next render,
+   * but undo/redo history snapshots need the true current value at the moment they're
+   * taken, mid-handler) — every write to `ports` goes through setPortsSynced below so
+   * this never drifts out of sync. */
+  const portsRef = useRef<string[]>([]);
+  const setPortsSynced = (next: string[]) => {
+    portsRef.current = next;
+    setPorts(next);
+  };
+
+  /** Undo/redo history for this editing session, local to this modal (not the app's own
+   * document undo stack). Snapshots the graph plus `ports`, since ports live outside the
+   * graph in React state. Refs, not state — history bookkeeping shouldn't itself trigger
+   * renders; `bump()` after every mutation already does that. */
+  const pastRef = useRef<EditorSnapshot[]>([]);
+  const futureRef = useRef<EditorSnapshot[]>([]);
+  /** Always reads graphRef.current directly (not the `graph` const) so this stays correct
+   * even when called from a long-lived callback (undo/redo) whose closure predates a
+   * later graph swap. */
+  const captureSnapshot = (): EditorSnapshot => ({ scene: graphRef.current!.toJSON(), ports: [...portsRef.current] });
+  const pushHistoryIfChanged = (before: EditorSnapshot) => {
+    const after = captureSnapshot();
+    if (!snapshotsEqual(before, after)) {
+      pastRef.current.push(before);
+      futureRef.current = [];
+    }
+  };
 
   const [imageDataUrl, setImageDataUrl] = useState<string | null>(null);
   const [imageEl, setImageEl] = useState<HTMLImageElement | null>(null);
@@ -428,7 +505,7 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
         const geometry = stored?.geometry ?? resolveSymbol(category.subtype, category.actuation, category.portCount);
         if (cancelled) return;
         populateGraph(graph, geometry);
-        setPorts(geometry.ports.filter((id) => graph.points.has(id)));
+        setPortsSynced(geometry.ports.filter((id) => graph.points.has(id)));
         if (geometry.image) {
           // Stored image symbol: open on the tab that made it, prefilled.
           setTab('image');
@@ -476,11 +553,13 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
     setPendingCircle(null);
     setCircleCursor(null);
     setMarquee(null);
+    setGroupDrag(null);
   }, []);
 
   const deleteSelected = useCallback(() => {
     if (selectionCount(selection) === 0) return;
     setError(null);
+    const before = captureSnapshot();
     // Edges before points, matching useSketchStore's deleteSelection: dropping the
     // selected lines/arcs first frees up their endpoints, so a selection containing both
     // an edge and its endpoints deletes cleanly in one go.
@@ -495,7 +574,7 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
     }
     if (removed.length > 0) {
       const gone = new Set(removed);
-      setPorts((prev) => prev.filter((id) => !gone.has(id)));
+      setPortsSynced(ports.filter((id) => !gone.has(id)));
     }
     // SceneGraph refuses to orphan an edge's endpoint — surface that instead of a silent
     // no-op, since the point visibly stays put. Blocked points stay selected so it's clear
@@ -508,21 +587,26 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
       );
     }
     setSelection({ points: new Set(blocked), lines: new Set(), arcs: new Set() });
+    pushHistoryIfChanged(before);
     bump();
-  }, [graph, selection]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [graph, selection, ports]);
 
   const copySelection = useCallback(() => {
     const payload = clipboardFromSelection(graph, selection);
     if (!payload) return;
     setClipboard(payload);
     setPasteCount(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graph, selection]);
 
   /** Pastes at a cascading offset with fresh ids throughout, then selects the copy so it
-   * can immediately be deleted or pasted again. Ports are intentionally not carried over. */
+   * can immediately be deleted, dragged, or pasted again. Ports are intentionally not
+   * carried over. */
   const pasteClipboard = useCallback(() => {
     if (!clipboard) return;
     setError(null);
+    const before = captureSnapshot();
     const offset = PASTE_OFFSET * (pasteCount + 1);
     const idMap = new Map<Id, Id>();
     const points = new Set<Id>();
@@ -543,23 +627,63 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
     }
     setPasteCount((n) => n + 1);
     setSelection({ points, lines, arcs });
+    pushHistoryIfChanged(before);
     bump();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clipboard, graph, pasteCount]);
+
+  /** Undo/redo are deliberately near-static callbacks (their only real dependency is
+   * `cancelPending`, itself static) — everything they touch is a ref or a React state
+   * setter, both stable regardless of which render's closure is calling them, so they
+   * stay correct even though they're essentially never recreated. */
+  const undo = useCallback(() => {
+    if (pastRef.current.length === 0) return;
+    const current = captureSnapshot();
+    const previous = pastRef.current.pop()!;
+    futureRef.current.push(current);
+    graphRef.current = SceneGraph.fromJSON(previous.scene);
+    setPortsSynced(previous.ports);
+    setSelection(emptySelection());
+    cancelPending();
+    setError(null);
+    bump();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cancelPending]);
+
+  const redo = useCallback(() => {
+    if (futureRef.current.length === 0) return;
+    const current = captureSnapshot();
+    const next = futureRef.current.pop()!;
+    pastRef.current.push(current);
+    graphRef.current = SceneGraph.fromJSON(next.scene);
+    setPortsSynced(next.ports);
+    setSelection(emptySelection());
+    cancelPending();
+    setError(null);
+    bump();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cancelPending]);
 
   // Scoped key handling, same pattern as RealHardwareModal. This is a full lockout, not a
   // filter: while the modal is open EVERY keystroke is stopped in the capture phase so
   // SketchCanvas's global handler can't switch tools or delete geometry behind it. Typing
   // in a text field is the one exemption — those keys are the field's, not the editor's.
+  // Escape never closes the modal (Cancel/Save/backdrop-click do that) — it only backs
+  // out of whatever's in progress, exactly like the main app's own Escape: cancel a
+  // pending gesture, then fall back to the Select tool (or clear its selection if
+  // already selecting).
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
       const isEditingText = !!target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA');
-      // Escape is handled even from a focused input: it means "back out of the modal",
-      // and letting it through would switch the app's tool behind us.
       if (e.key === 'Escape') {
         e.stopPropagation();
-        if (pendingLine || pendingArc || pendingCircle || marquee) cancelPending();
-        else onClose();
+        if (isEditingText) (target as HTMLElement).blur();
+        if (tab === 'draw') {
+          if (pendingLine || pendingArc || pendingCircle || marquee || groupDrag) cancelPending();
+          else if (tool === 'select') setSelection(emptySelection());
+          else setTool('select');
+        }
         return;
       }
       if (isEditingText) return;
@@ -569,13 +693,21 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
       if (e.key === 'Delete' || e.key === 'Backspace') {
         if (tab === 'draw') deleteSelected();
       } else if (e.metaKey || e.ctrlKey) {
-        // preventDefault so the browser's own copy/paste doesn't fire alongside ours.
-        if (key === 'c' && tab === 'draw') {
+        // preventDefault so the browser's own copy/paste/undo doesn't fire alongside ours.
+        if (tab !== 'draw') return;
+        if (key === 'c') {
           e.preventDefault();
           copySelection();
-        } else if (key === 'v' && tab === 'draw') {
+        } else if (key === 'v') {
           e.preventDefault();
           pasteClipboard();
+        } else if (key === 'z') {
+          e.preventDefault();
+          if (e.shiftKey) redo();
+          else undo();
+        } else if (key === 'y') {
+          e.preventDefault();
+          redo();
         }
       } else if (!e.altKey && tab === 'draw' && HOTKEY_TOOLS[key]) {
         setTool(HOTKEY_TOOLS[key]);
@@ -584,7 +716,21 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
-  }, [cancelPending, copySelection, deleteSelected, marquee, onClose, pasteClipboard, pendingArc, pendingCircle, pendingLine, tab]);
+  }, [
+    cancelPending,
+    copySelection,
+    deleteSelected,
+    groupDrag,
+    marquee,
+    pasteClipboard,
+    pendingArc,
+    pendingCircle,
+    pendingLine,
+    redo,
+    tab,
+    tool,
+    undo,
+  ]);
 
   // ------------------------------------------------------------------ Draw tab canvas
 
@@ -678,13 +824,63 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
     if (tool === 'select') {
       const additive = e.shiftKey || e.ctrlKey || e.metaKey;
       const hit = hitTest(graph, local);
-      if (hit) {
-        setSelection((prev) => withHit(prev, hit, additive));
-      } else {
+
+      if (!hit) {
         // Empty space starts a marquee. A plain click is just a zero-size one, which on
         // pointer-up clears the selection — so click-to-deselect still works.
         e.currentTarget.setPointerCapture(e.pointerId);
         setMarquee({ origin: local, current: local, additive });
+        bump();
+        return;
+      }
+
+      if (additive) {
+        setSelection((prev) => withHit(prev, hit, true));
+        bump();
+        return;
+      }
+
+      // Non-additive click on something: drag it immediately. Clicking a member of the
+      // *current* multi-selection drags the whole group together — what makes a pasted
+      // multi-piece shape (or any multi-select) draggable as one unit while it's still
+      // selected. Clicking anything else replaces the selection with just that item first.
+      const alreadyIn =
+        (hit.kind === 'point' && selection.points.has(hit.id)) ||
+        (hit.kind === 'line' && selection.lines.has(hit.id)) ||
+        (hit.kind === 'arc' && selection.arcs.has(hit.id));
+
+      let dragSelection: DrawSelection;
+      if (alreadyIn && selectionCount(selection) > 1) {
+        dragSelection = selection;
+      } else {
+        dragSelection = withHit(emptySelection(), hit, false);
+        setSelection(dragSelection);
+        if (hit.kind !== 'point') {
+          // A freshly-selected lone line/arc only drags as a rigid pair when neither
+          // endpoint is shared with other geometry — otherwise this would silently tear
+          // that joint (same rule as the main app's select tool / endpointsAreUnshared).
+          const edge = hit.kind === 'line' ? graph.lines.get(hit.id) : graph.arcs.get(hit.id);
+          if (edge && !(graph.pointDegree(edge.startId) === 1 && graph.pointDegree(edge.endId) === 1)) {
+            bump();
+            return; // selected, but not drag-eligible this click
+          }
+        }
+      }
+
+      const dragPointIds = selectionPointIds(graph, dragSelection);
+      const pointOrigins = new Map<Id, Vec2>();
+      for (const id of dragPointIds) {
+        const p = graph.points.get(id);
+        if (p) pointOrigins.set(id, { x: p.x, y: p.y });
+      }
+      if (pointOrigins.size > 0) {
+        e.currentTarget.setPointerCapture(e.pointerId);
+        setGroupDrag({
+          grabLocal: local,
+          pointOrigins,
+          singlePointId: hit.kind === 'point' && pointOrigins.size === 1 ? hit.id : null,
+          before: captureSnapshot(),
+        });
       }
       bump();
       return;
@@ -692,6 +888,7 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
 
     const snap = computeSnap({ cursor: local, graph, threshold: PICK_PX / PX_PER_UNIT, gridSize: GRID_UNITS });
     const pointAt = (): Id => snap.snappedPointId ?? graph.addPoint(snap.point.x, snap.point.y, freshId(graph, 'p')).id;
+    const before = captureSnapshot();
 
     if (tool === 'point') {
       setSelection({ points: new Set([pointAt()]), lines: new Set(), arcs: new Set() });
@@ -740,16 +937,42 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
         setCircleCursor(null);
       }
     }
+    pushHistoryIfChanged(before);
     bump();
   };
 
   const onDrawPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!marquee && !pendingCircle) return;
+    if (!marquee && !pendingCircle && !groupDrag) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const local = screenToLocal({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+
+    if (groupDrag) {
+      let delta: Vec2 = { x: local.x - groupDrag.grabLocal.x, y: local.y - groupDrag.grabLocal.y };
+      if (groupDrag.singlePointId) {
+        // The one case with an unambiguous point to run a real snap search against.
+        const origin = groupDrag.pointOrigins.get(groupDrag.singlePointId)!;
+        const target = { x: origin.x + delta.x, y: origin.y + delta.y };
+        const snap = computeSnap({
+          cursor: target,
+          graph,
+          threshold: PICK_PX / PX_PER_UNIT,
+          gridSize: GRID_UNITS,
+          excludePointId: groupDrag.singlePointId,
+        });
+        delta = { x: snap.point.x - origin.x, y: snap.point.y - origin.y };
+      } else {
+        delta = quantizeDelta(delta.x, delta.y, GRID_UNITS);
+      }
+      for (const [id, origin] of groupDrag.pointOrigins) {
+        graph.movePoint(id, origin.x + delta.x, origin.y + delta.y);
+      }
+      bump();
+      return;
+    }
+
     if (marquee) {
       setMarquee((prev) => (prev ? { ...prev, current: local } : prev));
-    } else {
+    } else if (pendingCircle) {
       // Preview against the snapped cursor, so what's drawn is the circle a click commits.
       const snap = computeSnap({ cursor: local, graph, threshold: PICK_PX / PX_PER_UNIT, gridSize: GRID_UNITS });
       setCircleCursor(snap.point);
@@ -757,6 +980,13 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
   };
 
   const onDrawPointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (groupDrag) {
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+      pushHistoryIfChanged(groupDrag.before);
+      setGroupDrag(null);
+      bump();
+      return;
+    }
     if (!marquee) return;
     if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
     const rect = normalizeRect(marquee.origin, marquee.current);
@@ -771,7 +1001,10 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
    * this stays a single-point operation even though the selection can hold many. */
   const togglePort = () => {
     if (!selectedPointId) return;
-    setPorts((prev) => (prev.includes(selectedPointId) ? prev.filter((p) => p !== selectedPointId) : [...prev, selectedPointId]));
+    const before = captureSnapshot();
+    const next = ports.includes(selectedPointId) ? ports.filter((p) => p !== selectedPointId) : [...ports, selectedPointId];
+    setPortsSynced(next);
+    pushHistoryIfChanged(before);
   };
 
   // ----------------------------------------------------------------- Image tab canvas
@@ -891,15 +1124,15 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
   };
 
   const drawHint =
-    tool === 'point'
-      ? 'Click to place a point (snaps to the grid and to existing points).'
+    tool === 'select'
+      ? 'Click to select, or drag to move (a multi-selection drags as one group). Shift/Ctrl/Cmd-click to add/remove, or drag a box around several. Ctrl/Cmd+C/V copy/paste, Ctrl/Cmd+Z/Y undo/redo.'
       : tool === 'line'
         ? 'Click a start point, then an end point. Escape cancels.'
         : tool === 'arc'
           ? 'Click start, then end, then a third point to set how far the arc bows. Escape cancels.'
-          : tool === 'circle'
-            ? 'Click the centre, then a point on the circle. Escape cancels.'
-            : 'Click to select, Shift-click to add/remove, or drag a box around several. Ctrl/Cmd+C and Ctrl/Cmd+V copy and paste.';
+          : tool === 'point'
+            ? 'Click to place a point (snaps to the grid and to existing points).'
+            : 'Click the centre, then a point on the circle. Escape cancels.';
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -929,7 +1162,7 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
         ) : tab === 'draw' ? (
           <>
             <div className="symbol-editor-toolbar">
-              {(['point', 'line', 'arc', 'circle', 'select'] as DrawTool[]).map((t) => (
+              {(['select', 'line', 'arc', 'point', 'circle'] as DrawTool[]).map((t) => (
                 <button
                   key={t}
                   className={tool === t ? 'active' : ''}
@@ -1021,4 +1254,15 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
   );
 }
 
-export { circleArcEndpoints, graphToGeometry, localToScreen, normalizeRect, pointInRect, populateGraph, screenToLocal, selectInsideRect };
+export {
+  circleArcEndpoints,
+  graphToGeometry,
+  localToScreen,
+  normalizeRect,
+  pointInRect,
+  populateGraph,
+  quantizeDelta,
+  screenToLocal,
+  selectInsideRect,
+  selectionPointIds,
+};

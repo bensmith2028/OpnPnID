@@ -90,3 +90,23 @@ describe('copySelectedComponents / pasteComponents', () => {
     expect(pasted.snapshot.realPart).not.toBe(graph.components.get(placedId)!.snapshot.realPart);
   });
 });
+
+describe('setSelection auto-closing the Library panel', () => {
+  it('closes the Library panel when selecting something non-empty', () => {
+    useSketchStore.setState({ libraryPanelOpen: true });
+    useSketchStore.getState().setSelection({ pointIds: new Set(), lineIds: new Set(['ln1']), arcIds: new Set(), componentIds: new Set() });
+    expect(useSketchStore.getState().libraryPanelOpen).toBe(false);
+  });
+
+  it('leaves the Library panel open when the resulting selection is empty', () => {
+    useSketchStore.setState({ libraryPanelOpen: true });
+    useSketchStore.getState().setSelection({ pointIds: new Set(), lineIds: new Set(), arcIds: new Set(), componentIds: new Set() });
+    expect(useSketchStore.getState().libraryPanelOpen).toBe(true);
+  });
+
+  it('does not reopen the Library panel when it is already closed', () => {
+    useSketchStore.setState({ libraryPanelOpen: false });
+    useSketchStore.getState().setSelection({ pointIds: new Set(['pt1']), lineIds: new Set(), arcIds: new Set(), componentIds: new Set() });
+    expect(useSketchStore.getState().libraryPanelOpen).toBe(false);
+  });
+});

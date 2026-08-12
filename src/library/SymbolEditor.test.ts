@@ -8,8 +8,10 @@ import {
   normalizeRect,
   pointInRect,
   populateGraph,
+  quantizeDelta,
   screenToLocal,
   selectInsideRect,
+  selectionPointIds,
 } from './SymbolEditor';
 
 /** The editor's persistence path is `SymbolGeometry -> SceneGraph -> SymbolGeometry`:
@@ -113,6 +115,41 @@ describe('marquee selection', () => {
     graph.addPoint(0, 0, 'inside');
     const base = { points: new Set(['kept']), lines: new Set<string>(), arcs: new Set<string>() };
     expect([...selectInsideRect(graph, rect, base).points].sort()).toEqual(['inside', 'kept']);
+  });
+});
+
+describe('selectionPointIds', () => {
+  it('includes directly-selected points plus the endpoints of selected lines/arcs', () => {
+    const graph = new SceneGraph();
+    populateGraph(graph, {
+      points: { a: { x: 0, y: 0 }, b: { x: 2, y: 0 }, c: { x: 4, y: 0 }, d: { x: 6, y: 0 }, lone: { x: 20, y: 20 } },
+      lines: [['a', 'b']],
+      arcs: [{ a: 'c', b: 'd', bulge: 0.5 }],
+      ports: [],
+    });
+    const lineId = [...graph.lines.values()][0].id;
+    const arcId = [...graph.arcs.values()][0].id;
+    const sel = { points: new Set(['lone']), lines: new Set([lineId]), arcs: new Set([arcId]) };
+
+    expect([...selectionPointIds(graph, sel)].sort()).toEqual(['a', 'b', 'c', 'd', 'lone']);
+  });
+
+  it('ignores a selected edge id that no longer exists', () => {
+    const graph = new SceneGraph();
+    graph.addPoint(0, 0, 'a');
+    const sel = { points: new Set(['a']), lines: new Set(['gone']), arcs: new Set<string>() };
+    expect([...selectionPointIds(graph, sel)]).toEqual(['a']);
+  });
+});
+
+describe('quantizeDelta', () => {
+  it('rounds each axis to the nearest grid multiple independently', () => {
+    expect(quantizeDelta(4.9, -3.1, 2)).toEqual({ x: 4, y: -4 });
+    expect(quantizeDelta(5.1, 0.9, 2)).toEqual({ x: 6, y: 0 });
+  });
+
+  it('passes the delta through unchanged when gridSize is zero (grid disabled)', () => {
+    expect(quantizeDelta(3.456, -1.234, 0)).toEqual({ x: 3.456, y: -1.234 });
   });
 });
 

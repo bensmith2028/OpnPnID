@@ -199,7 +199,19 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
   openRealHardwareModal: (componentId) => set({ realHardwareModalComponentId: componentId }),
   closeRealHardwareModal: () => set({ realHardwareModalComponentId: null }),
   setCamera: (camera) => set({ camera }),
-  setSelection: (selection) => set({ selection }),
+  // Selecting a point/line/arc/component (to edit its length/angle/etc. in the
+  // Properties Panel) auto-closes the Library panel if it's open, since the two share
+  // the same sidebar slot — otherwise clicking something to edit it would be hidden
+  // behind whatever the Library panel happened to be showing. Only closes on a
+  // non-empty selection: clearing a selection (Escape, deselect-click) shouldn't also
+  // yank the Library panel out from under someone actively browsing it. Placing/pasting
+  // a component sets `selection` directly via `set()` rather than through this action,
+  // so that flow (deliberately used *while* the Library panel is open) is unaffected.
+  setSelection: (selection) =>
+    set((s) => {
+      const hasSelection = selection.pointIds.size + selection.lineIds.size + selection.arcIds.size + selection.componentIds.size > 0;
+      return { selection, libraryPanelOpen: hasSelection ? false : s.libraryPanelOpen };
+    }),
   setTheme: (theme) => {
     window.localStorage?.setItem(THEME_STORAGE_KEY, theme);
     set({ theme });
