@@ -1,0 +1,532 @@
+:root {
+  color-scheme: dark;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+
+  --bg-body: #1e1f24;
+  --bg-panel: #26282f;
+  --bg-input: #1a1b20;
+  --bg-button: #34363f;
+  --bg-button-hover: #3d404b;
+  --border: #414450;
+  --text: #dfe3ea;
+  --text-muted: #9aa0ab;
+  --accent: #5ab4ff;
+  --accent-contrast: #101114;
+  --error: #ff6b6b;
+}
+
+/* The theme toggle stamps data-theme on <html> (see App.tsx). Falls back to the dark
+ * values above when unset (e.g. before the effect runs on first paint). */
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg-body: #f7f8fa;
+  --bg-panel: #ffffff;
+  --bg-input: #ffffff;
+  --bg-button: #eef0f3;
+  --bg-button-hover: #e3e6ea;
+  --border: #d3d7de;
+  --text: #23262d;
+  --text-muted: #6b7280;
+  --accent: #1a73e8;
+  --accent-contrast: #ffffff;
+  --error: #d64545;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg-body);
+  color: var(--text);
+  overflow: hidden;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 12px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.toolbar-group {
+  display: flex;
+  gap: 4px;
+}
+
+.toolbar-spacer {
+  flex: 1;
+}
+
+.toolbar-filename {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.toolbar button {
+  background: var(--bg-button);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.toolbar button:hover:not(:disabled) {
+  background: var(--bg-button-hover);
+}
+
+.toolbar button.active {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: var(--accent);
+}
+
+.toolbar button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.grid-controls {
+  align-items: center;
+  gap: 12px;
+}
+
+.grid-controls label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.grid-controls input[type='number'] {
+  width: 56px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  padding: 4px 6px;
+  font-size: 12px;
+}
+
+.grid-controls input[type='checkbox'] {
+  accent-color: var(--accent);
+}
+
+.app-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.sketch-canvas-container {
+  flex: 1;
+  position: relative;
+  min-width: 0;
+}
+
+.sketch-canvas-container canvas {
+  display: block;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.properties-panel {
+  width: 240px;
+  flex-shrink: 0;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border);
+  padding: 16px;
+  overflow-y: auto;
+}
+
+.properties-panel--empty {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.properties-panel h3 {
+  margin: 0 0 12px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 14px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.field input {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  padding: 6px 8px;
+  font-size: 13px;
+}
+
+.readonly-value {
+  color: var(--text);
+  font-size: 13px;
+  padding: 6px 0;
+}
+
+.field--checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.field--checkbox input[type='checkbox'] {
+  accent-color: var(--accent);
+}
+
+.field--checkbox span {
+  color: var(--text);
+}
+
+.fillet-row {
+  display: flex;
+  gap: 6px;
+}
+
+.fillet-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.fillet-row button {
+  background: var(--bg-button);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.fillet-row button:hover {
+  background: var(--bg-button-hover);
+}
+
+.field-error {
+  color: var(--error);
+  font-size: 11px;
+  margin: 4px 0 0;
+}
+
+.axis-lock-buttons {
+  display: flex;
+  gap: 4px;
+}
+
+.axis-lock-buttons button {
+  flex: 1;
+  background: var(--bg-button);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 0;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.axis-lock-buttons button.active {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: var(--accent);
+}
+
+.component-specs {
+  list-style: none;
+  margin: 6px 0;
+  padding: 8px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.component-specs li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+  color: var(--text);
+}
+
+.component-specs li span:first-child {
+  color: var(--text-muted);
+}
+
+.component-part-list {
+  list-style: none;
+  margin: 6px 0;
+  padding: 0;
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.component-part-list li button {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  color: var(--text);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  padding: 6px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.component-part-list li:last-child button {
+  border-bottom: none;
+}
+
+.component-part-list li button:hover {
+  background: var(--bg-button-hover);
+}
+
+/* ---------------------------------------------------------------------------------
+   Library panel
+   --------------------------------------------------------------------------------- */
+
+.library-panel {
+  width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.library-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.library-header h3 {
+  margin: 0;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.library-header-buttons {
+  display: flex;
+  gap: 4px;
+}
+
+.library-header button {
+  background: var(--bg-button);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.library-header button.active {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: var(--accent);
+}
+
+.library-category-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.library-category-tabs button {
+  background: var(--bg-button);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.library-category-tabs button.active {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: var(--accent);
+}
+
+.library-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.library-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.library-list--compact {
+  gap: 2px;
+}
+
+.library-list > li {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px;
+}
+
+.library-list--compact li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  padding: 4px 2px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.library-list--compact li:last-child {
+  border-bottom: none;
+}
+
+.library-list-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.library-list-name {
+  flex: 1;
+  text-align: left;
+  background: transparent;
+  color: var(--text);
+  border: none;
+  padding: 4px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.library-muted {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.library-list-row button,
+.library-list--compact li button {
+  background: var(--bg-button);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 7px;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.library-list-row button:hover,
+.library-list--compact li button:hover {
+  background: var(--bg-button-hover);
+}
+
+.library-add-row {
+  display: flex;
+  gap: 4px;
+}
+
+.library-add-row--wrap {
+  flex-wrap: wrap;
+}
+
+.library-add-row input,
+.library-add-row select {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  padding: 5px 6px;
+  font-size: 12px;
+  flex: 1;
+  min-width: 90px;
+}
+
+.library-add-row button {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 5px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.library-tag-letter-input,
+.library-port-count-input {
+  flex: 0 0 60px !important;
+  min-width: 0 !important;
+}
+
+.library-attributes,
+.library-real-parts {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.library-csv-row {
+  display: flex;
+  gap: 4px;
+}
+
+.library-csv-row button {
+  background: var(--bg-button);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.library-import-result {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin: 0;
+}
