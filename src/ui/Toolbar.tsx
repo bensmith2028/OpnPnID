@@ -1,6 +1,18 @@
 import { useState } from 'react';
 import { useSketchStore } from '../canvas/store/useSketchStore';
+import { exportBomDetailed, exportBomSummary } from '../io/bomExport';
+import { exportPdf } from '../io/pdfExport';
 import { newProject, openProject, saveProject, saveProjectAs } from '../io/projectIO';
+import { describeError } from '../library/errors';
+
+/** Every export action is a fire-and-forget async call from a plain button — this runs
+ * it and surfaces a failure via a plain alert. There's no existing lightweight
+ * toast/notification host in this codebase (the Library panels' inline field-error text
+ * needs a persistent host component that doesn't fit a one-off Toolbar action), so an
+ * alert is the simplest thing that reliably gets a failure in front of the user. */
+function runExportAction(fn: () => Promise<void>) {
+  fn().catch((e) => window.alert(describeError(e)));
+}
 
 export function Toolbar() {
   const activeTool = useSketchStore((s) => s.activeTool);
@@ -55,6 +67,17 @@ export function Toolbar() {
         <button onClick={() => openProject()}>Open</button>
         <button onClick={() => saveProject()}>Save</button>
         <button onClick={() => saveProjectAs()}>Save As</button>
+      </div>
+      <div className="toolbar-group">
+        <button onClick={() => runExportAction(exportPdf)} title="Export the current schematic as a PDF (always light theme)">
+          Export PDF
+        </button>
+        <button onClick={() => runExportAction(exportBomDetailed)} title="Export a Bill of Materials CSV with one row per placed component">
+          Export BOM (Detailed)
+        </button>
+        <button onClick={() => runExportAction(exportBomSummary)} title="Export a Bill of Materials CSV grouped by part, with quantities">
+          Export BOM (Summary)
+        </button>
       </div>
       <GridControls />
       <div className="toolbar-spacer" />
