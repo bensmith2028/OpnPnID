@@ -49,14 +49,21 @@ export function drawCircleOnPointerDown(world: Vec2, ctx: ToolCtx) {
 export function drawCircleOnPointerMove(world: Vec2, ctx: ToolCtx) {
   const { graph, gridSize } = useSketchStore.getState();
   const { interaction } = ctx;
-  if (!interaction.drawCircle) return;
   const snap = computeSnap({ cursor: world, graph, threshold: worldThreshold(), gridSize, disabled: interaction.altHeld });
-  interaction.drawCircle = { ...interaction.drawCircle, cursorWorld: snap.point };
+  // Written whether or not a circle is in progress: before click 1 this is the same "where
+  // your click lands" preview the Point/Text/Component tools give (and, under Alt, the
+  // absence of it is the only sign the placement will be freehand — see drawSnapIndicator);
+  // after it, it's the radius handle. Unlike the line/arc previews there's no per-gesture
+  // snap on DrawCircleState for the renderer to fall back to, so this slot serves both.
+  if (interaction.drawCircle) interaction.drawCircle = { ...interaction.drawCircle, cursorWorld: snap.point };
   interaction.hoverSnap = snap;
   ctx.requestRedraw();
 }
 
+/** Puts the circle tool away (Escape or a tool switch), preview included — the commit path
+ * already clears `hoverSnap` for the same reason (see drawLineCancel). */
 export function drawCircleCancel(ctx: ToolCtx) {
   ctx.interaction.drawCircle = null;
+  ctx.interaction.hoverSnap = null;
   ctx.requestRedraw();
 }

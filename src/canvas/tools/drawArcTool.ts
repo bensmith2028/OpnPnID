@@ -47,6 +47,9 @@ export function drawArcOnPointerDown(world: Vec2, shiftKey: boolean, ctx: ToolCt
       cursorWorld: world,
       snap,
     };
+    // The gesture's own `snap` drives the indicator from here (see renderer's fallback
+    // chain), so the pre-gesture hover preview goes rather than shadowing it.
+    interaction.hoverSnap = null;
     ctx.requestRedraw();
     return;
   }
@@ -129,7 +132,21 @@ function commitTangentArc(graph: SceneGraph, commit: (before: SceneGraphJSON) =>
 export function drawArcOnPointerMove(world: Vec2, ctx: ToolCtx) {
   const { graph, gridSize } = useSketchStore.getState();
   const { interaction } = ctx;
-  if (!interaction.drawArc) return;
+
+  if (!interaction.drawArc) {
+    // Where click 1 would land, previewed the same way the Point/Text/Component tools
+    // preview theirs — and, under Alt, *not* previewed at all, which is this tool's only
+    // sign that the next click is freehand (see drawSnapIndicator).
+    interaction.hoverSnap = computeSnap({
+      cursor: world,
+      graph,
+      threshold: worldThreshold(),
+      gridSize,
+      disabled: interaction.altHeld,
+    });
+    ctx.requestRedraw();
+    return;
+  }
 
   const { start, end } = interaction.drawArc;
   if (!end) {
@@ -152,7 +169,9 @@ export function drawArcOnPointerMove(world: Vec2, ctx: ToolCtx) {
   ctx.requestRedraw();
 }
 
+/** Puts the arc tool away (Escape or a tool switch), preview included — see drawLineCancel. */
 export function drawArcCancel(ctx: ToolCtx) {
   ctx.interaction.drawArc = null;
+  ctx.interaction.hoverSnap = null;
   ctx.requestRedraw();
 }

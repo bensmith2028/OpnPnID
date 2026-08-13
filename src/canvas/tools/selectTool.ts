@@ -1,17 +1,17 @@
 import { symbolLocalBounds } from '../../library/builtinSymbols';
-import type { Arc, ComponentInstance, Id, Line, Selection, Vec2 } from '../../types/geometry';
-import { distance, nearestGridPoint, projectPointOnArc, projectPointOnSegment, rotate, subtract } from '../geometry';
+import type { Arc, ComponentInstance, Id, Line, Selection, TextAnnotation, Vec2 } from '../../types/geometry';
+import { distance, projectPointOnArc, projectPointOnSegment, rotate, subtract, textHalfExtent } from '../geometry';
 import type { SceneGraph } from '../sceneGraph';
 import { computeSnap } from '../snapping';
 import { useSketchStore } from '../store/useSketchStore';
 import type { ToolCtx } from './drawLineTool';
 import { worldThreshold } from './drawLineTool';
 
-/** Total item count across all four selection sets — used to tell "one thing selected"
- * (the usual click-replaces-selection-and-drag-just-that behavior) from "part of a bigger
+/** Total item count across every selection set — used to tell "one thing selected" (the
+ * usual click-replaces-selection-and-drag-just-that behavior) from "part of a bigger
  * selection" (click-and-drag should move the whole group instead). */
 function selectionSize(selection: Selection): number {
-  return selection.pointIds.size + selection.lineIds.size + selection.arcIds.size + selection.componentIds.size;
+  return selection.pointIds.size + selection.lineIds.size + selection.arcIds.size + selection.componentIds.size + selection.textIds.size;
 }
 
 /** All point ids a group drag should move directly: every selected point, plus the
@@ -56,7 +56,13 @@ function startGroupDrag(world: Vec2, ctx: ToolCtx) {
     if (c) componentOrigins.set(id, { position: { x: c.position.x, y: c.position.y }, rotation: c.rotation });
   }
 
-  ctx.interaction.drag = { kind: 'group', grabWorld: world, pointOrigins, componentOrigins, before: graph.toJSON() };
+  const textOrigins = new Map<Id, Vec2>();
+  for (const id of selection.textIds) {
+    const t = graph.texts.get(id);
+    if (t) textOrigins.set(id, { x: t.x, y: t.y });
+  }
+
+  ctx.interaction.drag = { kind: 'group', grabWorld: world, pointOrigins, componentOrigins, textOrigins, before: graph.toJSON() };
 }
 
 function hitTestPoint(world: Vec2, threshold: number) {
@@ -117,6 +123,22 @@ function hitTestComponent(world: Vec2, threshold: number): ComponentInstance | n
   return best?.instance ?? null;
 }
 
+/** Hit-tests a text annotation's drawn box (the same estimated box the renderer outlines
+ * when one is selected — see textHalfExtent). A note is grabbed anywhere on its glyphs:
+ * unlike every other entity here it has no anchor point or stroke to aim at. */
+function hitTestText(world: Vec2, threshold: number): TextAnnotation | null {
+  const { graph } = useSketchStore.getState();
+  let best: { annotation: TextAnnotation; distance: number } | null = null;
+  for (const annotation of graph.texts.values()) {
+    const half = textHalfExtent(annotation.text, annotation.fontSize);
+    if (Math.abs(world.x - annotation.x) > half.x + threshold) continue;
+    if (Math.abs(world.y - annotation.y) > half.y + threshold) continue;
+    const d = distance(world, annotation);
+    if (!best || d < best.distance) best = { annotation, distance: d };
+  }
+  return best?.annotation ?? null;
+}
+
 /** An edge's body can be dragged as a rigid unit only when neither endpoint is shared with
  * another line/arc (or owned by a component) — dragging a shared endpoint should be done
  * via the endpoint (or component) itself, so this avoids silently tearing a joint (MVP
@@ -155,8 +177,46 @@ export function selectOnPointerDown(world: Vec2, additive: boolean, ctx: ToolCtx
       lineIds: additive ? selection.lineIds : new Set(),
       arcIds: additive ? selection.arcIds : new Set(),
       componentIds: additive ? selection.componentIds : new Set(),
+      textIds: additive ? selection.textIds : new Set(),
     });
-    interaction.drag = { kind: 'point', pointId: point.id, before: graph.toJSON() };
+    interaction.drag = {
+      kind: 'point',
+      pointId: point.id,
+      grabWorld: world,
+      origin: { x: point.x, y: point.y },
+      before: graph.toJSON(),
+    };
+    ctx.requestRedraw();
+    return;
+  }
+
+  // Notes are drawn on top of everything, so a click inside one's box takes it ahead of
+  // whatever it overlaps — but never ahead of a component's own connection port, which
+  // belongs to that component no matter what happens to sit over it.
+  const annotation = ownerComponentId ? null : hitTestText(world, threshold);
+  if (annotation) {
+    if (!additive && selection.textIds.has(annotation.id) && selectionSize(selection) > 1) {
+      startGroupDrag(world, ctx);
+      ctx.requestRedraw();
+      return;
+    }
+    const textIds = new Set(additive ? selection.textIds : []);
+    if (additive && textIds.has(annotation.id)) textIds.delete(annotation.id);
+    else textIds.add(annotation.id);
+    setSelection({
+      textIds,
+      pointIds: additive ? selection.pointIds : new Set(),
+      lineIds: additive ? selection.lineIds : new Set(),
+      arcIds: additive ? selection.arcIds : new Set(),
+      componentIds: additive ? selection.componentIds : new Set(),
+    });
+    interaction.drag = {
+      kind: 'text',
+      textId: annotation.id,
+      grabWorld: world,
+      origin: { x: annotation.x, y: annotation.y },
+      before: graph.toJSON(),
+    };
     ctx.requestRedraw();
     return;
   }
@@ -179,6 +239,7 @@ export function selectOnPointerDown(world: Vec2, additive: boolean, ctx: ToolCtx
       pointIds: additive ? selection.pointIds : new Set(),
       lineIds: additive ? selection.lineIds : new Set(),
       arcIds: additive ? selection.arcIds : new Set(),
+      textIds: additive ? selection.textIds : new Set(),
     });
     interaction.drag = {
       kind: 'component',
@@ -209,6 +270,7 @@ export function selectOnPointerDown(world: Vec2, additive: boolean, ctx: ToolCtx
         pointIds: additive ? selection.pointIds : new Set(),
         arcIds: additive ? selection.arcIds : new Set(),
         componentIds: additive ? selection.componentIds : new Set(),
+        textIds: additive ? selection.textIds : new Set(),
       });
 
       if (endpointsAreUnshared(line.startId, line.endId)) {
@@ -240,6 +302,7 @@ export function selectOnPointerDown(world: Vec2, additive: boolean, ctx: ToolCtx
         pointIds: additive ? selection.pointIds : new Set(),
         lineIds: additive ? selection.lineIds : new Set(),
         componentIds: additive ? selection.componentIds : new Set(),
+        textIds: additive ? selection.textIds : new Set(),
       });
 
       if (endpointsAreUnshared(arc.startId, arc.endId)) {
@@ -271,8 +334,16 @@ export function selectOnPointerMove(world: Vec2, ctx: ToolCtx) {
   if (!drag) return;
 
   if (drag.kind === 'point') {
+    // The point follows the cursor's *movement*, not the cursor itself — it's grabbed
+    // wherever the click landed within the hit-test radius, exactly like a component or a
+    // note is (see `origin` in DragState). No H/V axis inference: `originPoint` means "the
+    // point we're drawing away from", and a drag has no such thing — the pre-drag position
+    // would only ever infer alignment with where this very point already was, pinning the
+    // coordinate the user is trying to change and drawing an inference line to nothing.
+    // Aligning a dragged endpoint with its *neighbours* is what axis locks are for (they
+    // are stored on the line and propagated by movePoint).
     const snap = computeSnap({
-      cursor: world,
+      cursor: { x: drag.origin.x + (world.x - drag.grabWorld.x), y: drag.origin.y + (world.y - drag.grabWorld.y) },
       graph,
       threshold: worldThreshold(),
       gridSize,
@@ -285,10 +356,38 @@ export function selectOnPointerMove(world: Vec2, ctx: ToolCtx) {
     bumpVersion();
     ctx.requestRedraw();
   } else if (drag.kind === 'line' || drag.kind === 'arc') {
+    // Delta-quantized for the same reason the group drag below is: an edge dragged by its
+    // body moves two anchors at once, so there's no single point to run a snap search from.
+    // Snapping the *offset* keeps the edge's own length and angle while still landing it on
+    // the grid — whereas snapping each endpoint independently would stretch it.
+    const delta = computeSnap({
+      cursor: { x: world.x - drag.grabWorld.x, y: world.y - drag.grabWorld.y },
+      graph,
+      threshold: worldThreshold(),
+      gridSize,
+      gridMode: 'delta',
+      disabled: ctx.interaction.altHeld,
+    }).point;
+    graph.movePoint(drag.startId, drag.startOrigin.x + delta.x, drag.startOrigin.y + delta.y);
+    graph.movePoint(drag.endId, drag.endOrigin.x + delta.x, drag.endOrigin.y + delta.y);
+    bumpVersion();
+    ctx.requestRedraw();
+  } else if (drag.kind === 'text') {
     const dx = world.x - drag.grabWorld.x;
     const dy = world.y - drag.grabWorld.y;
-    graph.movePoint(drag.startId, drag.startOrigin.x + dx, drag.startOrigin.y + dy);
-    graph.movePoint(drag.endId, drag.endOrigin.x + dx, drag.endOrigin.y + dy);
+    // Endpoint snapping is opted out of, not merely skipped: a note is not a vertex, so
+    // snapping it onto an existing point would land it exactly on top of the geometry it
+    // is there to label. The grid snap is the same one textPlacementPoint uses, so a note
+    // dragged somewhere ends up where placing it there would have.
+    const snap = computeSnap({
+      cursor: { x: drag.origin.x + dx, y: drag.origin.y + dy },
+      graph,
+      threshold: worldThreshold(),
+      gridSize,
+      allowEndpoint: false,
+      disabled: ctx.interaction.altHeld,
+    });
+    graph.moveText(drag.textId, snap.point.x, snap.point.y);
     bumpVersion();
     ctx.requestRedraw();
   } else if (drag.kind === 'component') {
@@ -308,17 +407,22 @@ export function selectOnPointerMove(world: Vec2, ctx: ToolCtx) {
     bumpVersion();
     ctx.requestRedraw();
   } else if (drag.kind === 'group') {
-    const rawDx = world.x - drag.grabWorld.x;
-    const rawDy = world.y - drag.grabWorld.y;
     // No per-point endpoint-snap search here — with several points/components moving at
-    // once there's no single anchor to search against, so (grid-permitting) the whole
-    // group's delta is just quantized to the grid instead, same tradeoff as the symbol
-    // editor's group drag.
-    const delta = ctx.interaction.altHeld ? { x: rawDx, y: rawDy } : nearestGridPoint({ x: rawDx, y: rawDy }, gridSize);
+    // once there's no single anchor to search against, so the whole group's delta is
+    // quantized to the grid instead, same tradeoff as the symbol editor's group drag.
+    const delta = computeSnap({
+      cursor: { x: world.x - drag.grabWorld.x, y: world.y - drag.grabWorld.y },
+      graph,
+      threshold: worldThreshold(),
+      gridSize,
+      gridMode: 'delta',
+      disabled: ctx.interaction.altHeld,
+    }).point;
     for (const [id, origin] of drag.pointOrigins) graph.movePoint(id, origin.x + delta.x, origin.y + delta.y);
     for (const [id, origin] of drag.componentOrigins) {
       graph.moveComponent(id, { x: origin.position.x + delta.x, y: origin.position.y + delta.y }, origin.rotation, useSketchStore.getState().componentScale);
     }
+    for (const [id, origin] of drag.textOrigins) graph.moveText(id, origin.x + delta.x, origin.y + delta.y);
     bumpVersion();
     ctx.requestRedraw();
   } else if (drag.kind === 'marquee') {
@@ -336,8 +440,7 @@ export function selectOnPointerUp(ctx: ToolCtx) {
     if (drag.mergeCandidate) graph.mergePoints(drag.pointId, drag.mergeCandidate);
     const after = graph.toJSON();
     if (JSON.stringify(after) !== JSON.stringify(drag.before)) commit(drag.before);
-    ctx.interaction.hoverSnap = null;
-  } else if (drag.kind === 'line' || drag.kind === 'arc' || drag.kind === 'component' || drag.kind === 'group') {
+  } else if (drag.kind === 'line' || drag.kind === 'arc' || drag.kind === 'text' || drag.kind === 'component' || drag.kind === 'group') {
     const after = graph.toJSON();
     if (JSON.stringify(after) !== JSON.stringify(drag.before)) commit(drag.before);
   } else if (drag.kind === 'marquee') {
@@ -369,10 +472,20 @@ export function selectOnPointerUp(ctx: ToolCtx) {
       if (inRect(instance.position)) componentIds.add(instance.id);
     }
 
-    setSelection({ pointIds, lineIds, arcIds, componentIds });
+    // A note is caught by its position (its centre), the same "where the thing is" rule
+    // the components loop above uses — not by requiring its whole box inside the marquee.
+    const textIds = new Set(drag.additive ? selection.textIds : []);
+    for (const annotation of graph.texts.values()) if (inRect(annotation)) textIds.add(annotation.id);
+
+    setSelection({ pointIds, lineIds, arcIds, componentIds, textIds });
   }
 
   ctx.interaction.drag = null;
+  // Cleared for every drag kind, not just the point drag that used to do it here: the
+  // component drag writes `hoverSnap` too, and the Select tool has no hover preview of its
+  // own to repaint the slot afterward — so any marker left behind stayed on screen,
+  // pointing at where a finished drag happened to end, until another tool took over.
+  ctx.interaction.hoverSnap = null;
   ctx.requestRedraw();
 }
 
@@ -384,10 +497,18 @@ export function componentAtWorld(world: Vec2): ComponentInstance | null {
   return hitTestComponent(world, worldThreshold());
 }
 
-export function selectHitTestForCursor(world: Vec2): 'point' | 'line' | 'arc' | 'component' | null {
+/** Finds the text annotation (if any) under a world point, using the same box hit test as
+ * the select tool's own pointer-down handling — exposed for SketchCanvas's
+ * double-click-to-re-edit handler, which needs "what note is here" without duplicating it. */
+export function textAtWorld(world: Vec2): TextAnnotation | null {
+  return hitTestText(world, worldThreshold());
+}
+
+export function selectHitTestForCursor(world: Vec2): 'point' | 'line' | 'arc' | 'text' | 'component' | null {
   const threshold = worldThreshold();
   const point = hitTestPoint(world, threshold);
   if (point) return 'point';
+  if (hitTestText(world, threshold)) return 'text';
   if (hitTestComponent(world, threshold)) return 'component';
   const hit = hitTestEdge(world, threshold);
   return hit?.kind ?? null;

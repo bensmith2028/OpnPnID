@@ -32,7 +32,16 @@ export interface DrawCircleState {
 }
 
 export type DragState =
-  | { kind: 'point'; pointId: Id; before: SceneGraphJSON; mergeCandidate?: Id }
+  /** A single point being dragged. `grabWorld`/`origin` are the cursor and the point's
+   * position at pointer-down, so the drag preserves the grab offset like every other kind
+   * here: a point is picked anywhere within the hit-test radius, and without them the point
+   * jumped that far to meet the cursor on the first move — enough, with the grid ungated,
+   * to land an already-on-grid point a whole cell away from a nudge that meant nothing. */
+  | { kind: 'point'; pointId: Id; grabWorld: Vec2; origin: Vec2; before: SceneGraphJSON; mergeCandidate?: Id }
+  /** An edge being dragged by its *body* (only offered when neither endpoint is shared —
+   * see endpointsAreUnshared). Both of its anchors move at once, so like the group drag
+   * below it grid-quantizes the delta rather than snap-searching from a single point;
+   * that also keeps the edge's own length and angle intact. */
   | {
       kind: 'line';
       lineId: Id;
@@ -61,6 +70,9 @@ export type DragState =
       rotation: number;
       before: SceneGraphJSON;
     }
+  /** A text annotation being dragged. Nothing propagates from it (a note has no
+   * connectivity), so unlike a point drag this is a plain grid-quantized translate. */
+  | { kind: 'text'; textId: Id; grabWorld: Vec2; origin: Vec2; before: SceneGraphJSON }
   | { kind: 'marquee'; originWorld: Vec2; currentWorld: Vec2; additive: boolean }
   /** Rigid-translate drag of an entire multi-item selection (e.g. a just-pasted batch of
    * components) — started when the pointer goes down on something already part of a
@@ -73,6 +85,7 @@ export type DragState =
       grabWorld: Vec2;
       pointOrigins: Map<Id, Vec2>;
       componentOrigins: Map<Id, { position: Vec2; rotation: number }>;
+      textOrigins: Map<Id, Vec2>;
       before: SceneGraphJSON;
     };
 

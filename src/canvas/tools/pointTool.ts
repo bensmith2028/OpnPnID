@@ -71,7 +71,13 @@ export function pointOnPointerDown(world: Vec2, ctx: ToolCtx) {
 
   const nearestPoint = graph.nearestPoint(world);
   if (nearestPoint && nearestPoint.distance <= threshold) {
-    setSelection({ pointIds: new Set([nearestPoint.point.id]), lineIds: new Set(), arcIds: new Set(), componentIds: new Set() });
+    setSelection({
+      pointIds: new Set([nearestPoint.point.id]),
+      lineIds: new Set(),
+      arcIds: new Set(),
+      componentIds: new Set(),
+      textIds: new Set(),
+    });
     ctx.requestRedraw();
     return;
   }
@@ -82,7 +88,7 @@ export function pointOnPointerDown(world: Vec2, ctx: ToolCtx) {
     const newPoint = edgeHit.kind === 'line' ? graph.splitLine(edgeHit.id, edgeHit.point) : graph.splitArc(edgeHit.id, edgeHit.point);
     if (newPoint) {
       commit(before);
-      setSelection({ pointIds: new Set([newPoint.id]), lineIds: new Set(), arcIds: new Set(), componentIds: new Set() });
+      setSelection({ pointIds: new Set([newPoint.id]), lineIds: new Set(), arcIds: new Set(), componentIds: new Set(), textIds: new Set() });
     }
     ctx.requestRedraw();
     return;
@@ -92,7 +98,7 @@ export function pointOnPointerDown(world: Vec2, ctx: ToolCtx) {
   const before = graph.toJSON();
   const newPoint = graph.addPoint(snap.point.x, snap.point.y);
   commit(before);
-  setSelection({ pointIds: new Set([newPoint.id]), lineIds: new Set(), arcIds: new Set(), componentIds: new Set() });
+  setSelection({ pointIds: new Set([newPoint.id]), lineIds: new Set(), arcIds: new Set(), componentIds: new Set(), textIds: new Set() });
   ctx.requestRedraw();
 }
 

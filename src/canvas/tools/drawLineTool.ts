@@ -35,11 +35,28 @@ export function drawLineOnPointerDown(world: Vec2, ctx: ToolCtx) {
       cursorWorld: world,
       snap,
     };
+    // From here the gesture's own `snap` drives the indicator (see the fallback chain in
+    // renderer's drawSnapIndicator call), so drop the pre-gesture hover preview rather
+    // than leaving a second, no-longer-updated marker to take priority over it.
+    interaction.hoverSnap = null;
     ctx.requestRedraw();
     return;
   }
 
-  const { anchor, snap } = interaction.drawLine;
+  // Recomputed from *this* click's position rather than reusing the snap the last
+  // pointer-move left behind: with a mouse a move almost always precedes the down, but a
+  // pen/touch tap or a click straight after a wheel-zoom has no such move, and would
+  // otherwise commit the segment to wherever the cursor last was.
+  const { anchor } = interaction.drawLine;
+  const snap = computeSnap({
+    cursor: world,
+    graph,
+    threshold: worldThreshold(),
+    gridSize,
+    originPoint: anchor.pos,
+    excludePointId: anchor.pointId ?? undefined,
+    disabled: interaction.altHeld,
+  });
   if (distance(anchor.pos, snap.point) < 1e-6) return; // zero-length click, ignore
 
   const before = graph.toJSON();
@@ -61,7 +78,23 @@ export function drawLineOnPointerDown(world: Vec2, ctx: ToolCtx) {
 export function drawLineOnPointerMove(world: Vec2, ctx: ToolCtx) {
   const { graph, gridSize } = useSketchStore.getState();
   const { interaction } = ctx;
-  if (!interaction.drawLine) return;
+
+  if (!interaction.drawLine) {
+    // Before the first click there's no gesture to preview, but the *landing spot* of that
+    // click still needs showing — the same hover feedback the Point/Text/Component tools
+    // give. It's also the only Alt feedback this tool has: a freehand placement is drawn as
+    // no marker at all (see drawSnapIndicator), which reads as "Alt is doing something"
+    // only if a marker was there to begin with.
+    interaction.hoverSnap = computeSnap({
+      cursor: world,
+      graph,
+      threshold: worldThreshold(),
+      gridSize,
+      disabled: interaction.altHeld,
+    });
+    ctx.requestRedraw();
+    return;
+  }
 
   const { anchor } = interaction.drawLine;
   const snap = computeSnap({
@@ -77,7 +110,11 @@ export function drawLineOnPointerMove(world: Vec2, ctx: ToolCtx) {
   ctx.requestRedraw();
 }
 
+/** Puts the line tool away (Escape or a tool switch): the chain *and* the hover preview,
+ * which lives in the shared `hoverSnap` slot and would otherwise sit frozen on the canvas
+ * until the incoming tool's next pointer move repaints it — same reasoning as textCancel. */
 export function drawLineCancel(ctx: ToolCtx) {
   ctx.interaction.drawLine = null;
+  ctx.interaction.hoverSnap = null;
   ctx.requestRedraw();
 }
