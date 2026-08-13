@@ -12,12 +12,9 @@
  * and SymbolEditor.tsx.
  */
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { isTauriRuntime } from './runtime';
 
 export type MenuAction = 'undo' | 'redo' | 'cut' | 'copy' | 'paste' | 'selectAll';
-
-function isTauriRuntime(): boolean {
-  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
-}
 
 /** Subscribes to native Edit-menu clicks. Safe to call unconditionally (no-ops outside a
  * Tauri runtime, e.g. plain `npm run dev` in a browser) and returns a synchronous cleanup

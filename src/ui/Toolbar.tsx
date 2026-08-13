@@ -1,16 +1,17 @@
 import { useState } from 'react';
-import { useSketchStore } from '../canvas/store/useSketchStore';
+import { MIN_SNAP_THRESHOLD_PX, useSketchStore } from '../canvas/store/useSketchStore';
 import { exportBomDetailed, exportBomSummary } from '../io/bomExport';
 import { exportPdf } from '../io/pdfExport';
 import { newProject, openProject, saveProject, saveProjectAs } from '../io/projectIO';
 import { describeError } from '../library/errors';
 
-/** Every export action is a fire-and-forget async call from a plain button — this runs
- * it and surfaces a failure via a plain alert. There's no existing lightweight
- * toast/notification host in this codebase (the Library panels' inline field-error text
- * needs a persistent host component that doesn't fit a one-off Toolbar action), so an
- * alert is the simplest thing that reliably gets a failure in front of the user. */
-function runExportAction(fn: () => Promise<void>) {
+/** Every file action (open/save/export) is a fire-and-forget async call from a plain
+ * button — this runs it and surfaces a failure via a plain alert. There's no existing
+ * lightweight toast/notification host in this codebase (the Library panels' inline
+ * field-error text needs a persistent host component that doesn't fit a one-off Toolbar
+ * action), so an alert is the simplest thing that reliably gets a failure — including
+ * "that file isn't an OpnPnID project" on an import — in front of the user. */
+function runFileAction(fn: () => Promise<void>) {
   fn().catch((e) => window.alert(describeError(e)));
 }
 
@@ -48,6 +49,13 @@ export function Toolbar() {
         <button className={activeTool === 'circle' ? 'active' : ''} onClick={() => setTool('circle')} title="Circle (C)">
           Circle
         </button>
+        <button
+          className={activeTool === 'text' ? 'active' : ''}
+          onClick={() => setTool('text')}
+          title="Text (T) — click where the note goes and type it; click an existing note to re-edit it"
+        >
+          Text
+        </button>
       </div>
       <div className="toolbar-group">
         <button className={libraryPanelOpen ? 'active' : ''} onClick={toggleLibraryPanel} title="Browse/place components and manage the library">
@@ -63,19 +71,30 @@ export function Toolbar() {
         </button>
       </div>
       <div className="toolbar-group">
-        <button onClick={() => newProject()}>New</button>
-        <button onClick={() => openProject()}>Open</button>
-        <button onClick={() => saveProject()}>Save</button>
-        <button onClick={() => saveProjectAs()}>Save As</button>
+        <button onClick={() => newProject()} title="Start an empty drawing">
+          New
+        </button>
+        <button onClick={() => runFileAction(openProject)} title="Open a project file (.pnid.json) — including one exported from another machine">
+          Open
+        </button>
+        <button onClick={() => runFileAction(saveProject)} title="Save the whole drawing to its project file (.pnid.json)">
+          Save
+        </button>
+        <button
+          onClick={() => runFileAction(saveProjectAs)}
+          title="Export the whole drawing to a new project file (.pnid.json), openable in any other instance of OpnPnID"
+        >
+          Save As
+        </button>
       </div>
       <div className="toolbar-group">
-        <button onClick={() => runExportAction(exportPdf)} title="Export the current schematic as a PDF (always light theme)">
+        <button onClick={() => runFileAction(exportPdf)} title="Export the current schematic as a PDF (always light theme)">
           Export PDF
         </button>
-        <button onClick={() => runExportAction(exportBomDetailed)} title="Export a Bill of Materials CSV with one row per placed component">
+        <button onClick={() => runFileAction(exportBomDetailed)} title="Export a Bill of Materials CSV with one row per placed component">
           Export BOM (Detailed)
         </button>
-        <button onClick={() => runExportAction(exportBomSummary)} title="Export a Bill of Materials CSV grouped by part, with quantities">
+        <button onClick={() => runFileAction(exportBomSummary)} title="Export a Bill of Materials CSV grouped by part, with quantities">
           Export BOM (Summary)
         </button>
       </div>
@@ -114,9 +133,13 @@ function GridControls() {
     else setGridText(String(gridSize));
   };
 
+  // Below the floor is rejected outright (buffer snapped back to the live value) rather
+  // than accepted-and-clamped, so the box never shows a number the app isn't using — same
+  // shape as commitGrid's `> 0` rule. The floor itself exists because this value is also
+  // the hit-test radius: see MIN_SNAP_THRESHOLD_PX.
   const commitSnap = () => {
     const value = parseFloat(snapText);
-    if (Number.isFinite(value) && value >= 0) setSnapThresholdPx(value);
+    if (Number.isFinite(value) && value >= MIN_SNAP_THRESHOLD_PX) setSnapThresholdPx(value);
     else setSnapText(String(snapThresholdPx));
   };
 
@@ -145,12 +168,12 @@ function GridControls() {
           onKeyDown={onEnter(commitGrid)}
         />
       </label>
-      <label title="Snap/pick distance, in screen pixels">
+      <label title="How close (in screen pixels) the cursor must come to grab an existing point, pick an item, or lock to an axis. The grid always snaps — hold Alt to place freely.">
         Snap px
         <input
           type="number"
           step="any"
-          min="0"
+          min={MIN_SNAP_THRESHOLD_PX}
           value={snapText}
           onChange={(e) => setSnapText(e.target.value)}
           onBlur={commitSnap}
