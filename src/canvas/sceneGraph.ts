@@ -1,4 +1,4 @@
-import type { Arc, AxisLock, ComponentInstance, ComponentSnapshot, Id, Line, Point, SceneGraphJSON, Vec2 } from '../types/geometry';
+import type { Arc, AxisLock, ComponentInstance, ComponentSnapshot, Id, Line, Point, SceneGraphJSON, TextAnnotation, Vec2 } from '../types/geometry';
 import {
   add,
   angleOf,
@@ -46,6 +46,10 @@ export class SceneGraph {
   lines = new Map<Id, Line>();
   arcs = new Map<Id, Arc>();
   components = new Map<Id, ComponentInstance>();
+  /** Free text annotations. Not part of the connectivity graph at all (see TextAnnotation)
+   * — kept here so they travel with the scene through toJSON/fromJSON, which is what gives
+   * them undo/redo, save/load and PDF export for free. */
+  texts = new Map<Id, TextAnnotation>();
   /** pointId -> set of edge ids (line or arc) touching it. Kept in sync by every mutator. */
   private adjacency = new Map<Id, Set<Id>>();
   /** pointId -> owning component instance id, for connection points. A component's ports
@@ -482,6 +486,9 @@ export class SceneGraph {
     categoryId: string;
     realPartId: string | null;
     tag: string;
+    /** Optional descriptive name — only ever set by a caller reinstating one (paste); a
+     * freshly placed component starts unnamed. */
+    name?: string;
     position: Vec2;
     rotation: number;
     snapshot: ComponentSnapshot;
@@ -504,6 +511,7 @@ export class SceneGraph {
       categoryId: params.categoryId,
       realPartId: params.realPartId,
       tag: params.tag,
+      ...(params.name ? { name: params.name } : {}),
       position: params.position,
       rotation: params.rotation,
       connections,
@@ -571,6 +579,17 @@ export class SceneGraph {
     if (instance) instance.tag = tag;
   }
 
+  /** Renames a placed instance. An empty/whitespace-only name drops the field entirely
+   * (rather than storing ''), so "no name" is a single state everywhere downstream — the
+   * renderer and the serialized project file both just see an absent `name`. */
+  setComponentName(id: Id, name: string) {
+    const instance = this.components.get(id);
+    if (!instance) return;
+    const trimmed = name.trim();
+    if (trimmed) instance.name = trimmed;
+    else delete instance.name;
+  }
+
   /** Reassigns a placed instance's real part — the Properties Panel's "Change Part"
    * picker is scoped to the instance's own category (a category's port count/symbol are
    * fixed by construction, so real parts within it are always port-compatible), but this
@@ -585,12 +604,53 @@ export class SceneGraph {
     return true;
   }
 
+  /** Places a free text annotation centered on (x, y). Content is stored trimmed, so
+   * "blank" is a single state everywhere downstream — and callers never create one that's
+   * blank to begin with, since an empty note would be invisible and unselectable. */
+  addText(x: number, y: number, text: string, fontSize: number, id: Id = nextId('txt')): TextAnnotation {
+    const annotation: TextAnnotation = { id, x, y, text: text.trim(), fontSize };
+    this.texts.set(id, annotation);
+    return annotation;
+  }
+
+  /** Rewrites a note's content. Emptying it deletes the note outright rather than leaving
+   * an invisible one behind that could never be clicked again to fix — "delete the text"
+   * is what clearing the field means. */
+  setTextContent(id: Id, text: string) {
+    const annotation = this.texts.get(id);
+    if (!annotation) return;
+    const trimmed = text.trim();
+    if (trimmed) annotation.text = trimmed;
+    else this.texts.delete(id);
+  }
+
+  /** Sets a note's height in world units. Non-positive sizes are ignored rather than
+   * clamped to something arbitrary — the caller's input is simply not a size. */
+  setTextFontSize(id: Id, fontSize: number) {
+    const annotation = this.texts.get(id);
+    if (annotation && fontSize > 0) annotation.fontSize = fontSize;
+  }
+
+  /** Moves a note. Nothing propagates: an annotation has no connectivity to carry a move
+   * through, which is why this isn't movePoint. */
+  moveText(id: Id, x: number, y: number) {
+    const annotation = this.texts.get(id);
+    if (!annotation) return;
+    annotation.x = x;
+    annotation.y = y;
+  }
+
+  removeText(id: Id) {
+    this.texts.delete(id);
+  }
+
   toJSON(): SceneGraphJSON {
     return {
       points: [...this.points.values()].map((p) => ({ ...p })),
       lines: [...this.lines.values()].map((l) => ({ ...l })),
       arcs: [...this.arcs.values()].map((a) => ({ ...a })),
       components: [...this.components.values()].map((c) => this.cloneComponent(c)),
+      texts: [...this.texts.values()].map((t) => ({ ...t })),
     };
   }
 
@@ -617,12 +677,14 @@ export class SceneGraph {
       g.components.set(instance.id, instance);
       for (const conn of instance.connections) g.pointOwner.set(conn.pointId, instance.id);
     }
+    for (const t of json.texts ?? []) g.addText(t.x, t.y, t.text, t.fontSize, t.id);
     // Bump the id counter past anything loaded so freshly generated ids never collide.
     const allIds = [
       ...json.points.map((p) => p.id),
       ...json.lines.map((l) => l.id),
       ...(json.arcs ?? []).map((a) => a.id),
       ...(json.components ?? []).map((c) => c.id),
+      ...(json.texts ?? []).map((t) => t.id),
     ];
     for (const id of allIds) {
       const suffix = id.split('_').pop() ?? '';

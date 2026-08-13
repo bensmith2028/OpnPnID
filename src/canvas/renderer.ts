@@ -1,10 +1,10 @@
 import { symbolBoundingRadius } from '../library/builtinSymbols';
-import type { ComponentInstance, Selection, Vec2 } from '../types/geometry';
-import { add, arcGeometry, type ArcGeometry, bulgeFromSagittaCursor, rotate } from './geometry';
+import type { ComponentInstance, Selection, TextAnnotation, Vec2 } from '../types/geometry';
+import { add, arcGeometry, type ArcGeometry, bulgeFromSagittaCursor, rotate, textHalfExtent } from './geometry';
 import type { SceneGraph } from './sceneGraph';
 import type { CameraState, Theme } from './store/useSketchStore';
 import type { CanvasSize, InteractionState } from './tools/types';
-import { adaptiveGridSize, worldToScreen } from './viewport';
+import { adaptiveGridSize, GRID_MIN_SCREEN_PX, worldToScreen } from './viewport';
 
 interface Palette {
   background: string;
@@ -23,6 +23,9 @@ interface Palette {
   marqueeBorder: string;
   axisLockGlyph: string;
   componentTag: string;
+  /** Free text annotations. Deliberately the same ink as the geometry rather than the
+   * tag colour: a note the user placed is drawing content, not a derived label. */
+  annotation: string;
 }
 
 const DARK_PALETTE: Palette = {
@@ -42,6 +45,7 @@ const DARK_PALETTE: Palette = {
   marqueeBorder: '#5ab4ff',
   axisLockGlyph: '#ffb454',
   componentTag: '#8ecdff',
+  annotation: '#dfe3ea',
 };
 
 /**
@@ -66,6 +70,7 @@ const LIGHT_PALETTE: Palette = {
   marqueeBorder: '#1a73e8',
   axisLockGlyph: '#c96a12',
   componentTag: '#0c5fc7',
+  annotation: '#23262d',
 };
 
 function paletteFor(theme: Theme): Palette {
@@ -144,9 +149,14 @@ export function render(params: RenderParams) {
     ctx.fill();
   }
 
-  // Tags render last (on top of everything) so they stay legible over overlapping geometry.
+  // Labels and annotations render last (on top of everything) so they stay legible over
+  // overlapping geometry.
   for (const instance of graph.components.values()) {
-    drawComponentTag(ctx, instance, camera, size, colors, selection.componentIds.has(instance.id), componentScale);
+    drawComponentLabels(ctx, instance, camera, size, colors, selection.componentIds.has(instance.id), componentScale);
+  }
+
+  for (const annotation of graph.texts.values()) {
+    drawTextAnnotation(ctx, annotation, camera, size, colors, selection.textIds.has(annotation.id));
   }
 
   if (interaction.drawLine) {
@@ -252,28 +262,57 @@ function strokeArcByEndpoints(ctx: CanvasRenderingContext2D, start: Vec2, end: V
   strokeArc(ctx, arcGeometry(start, end, bulge), start, end, camera, size);
 }
 
-function drawGrid(ctx: CanvasRenderingContext2D, size: CanvasSize, camera: CameraState, gridSize: number, colors: Palette) {
-  if (gridSize <= 0) return;
-  const spacing = adaptiveGridSize(gridSize, camera.zoom);
+/**
+ * Screen spacing under which the true grid stops being drawn at all: the lines would merge
+ * into a solid wash and cost a line per pixel to draw. This is the one place the
+ * "what you see is what you snap to" rule bends, and it bends harmlessly — at that density
+ * the furthest a snap can move the cursor is a couple of screen pixels, which is finer than
+ * the user can aim anyway.
+ */
+const MIN_FINE_GRID_PX = 4;
+
+/** Strokes one full-canvas set of grid lines at `spacing` world units, aligned on the world
+ * origin. Callers set strokeStyle/alpha; this only lays down the path. */
+function strokeGridLines(ctx: CanvasRenderingContext2D, size: CanvasSize, camera: CameraState, spacing: number) {
   const screenSpacing = spacing * camera.zoom;
-
   const originScreen = worldToScreen({ x: 0, y: 0 }, camera, size);
-  const startX = originScreen.x % screenSpacing;
-  const startY = originScreen.y % screenSpacing;
-
-  ctx.strokeStyle = colors.grid;
-  ctx.lineWidth = 1;
   ctx.beginPath();
-  for (let x = startX; x < size.width; x += screenSpacing) {
+  for (let x = originScreen.x % screenSpacing; x < size.width; x += screenSpacing) {
     ctx.moveTo(x, 0);
     ctx.lineTo(x, size.height);
   }
-  for (let y = startY; y < size.height; y += screenSpacing) {
+  for (let y = originScreen.y % screenSpacing; y < size.height; y += screenSpacing) {
     ctx.moveTo(0, y);
     ctx.lineTo(size.width, y);
   }
   ctx.stroke();
+}
 
+function drawGrid(ctx: CanvasRenderingContext2D, size: CanvasSize, camera: CameraState, gridSize: number, colors: Palette) {
+  if (gridSize <= 0) return;
+  ctx.strokeStyle = colors.grid;
+  ctx.lineWidth = 1;
+
+  // Two passes, because the grid exists only to show where snapping will land: drawing the
+  // coarsened `adaptiveGridSize` spacing *alone* would put every snap target between the
+  // lines the user can see. So the true `gridSize` grid — the one snapping actually uses —
+  // is always the grid on screen; when zooming out crowds it, it fades out instead of being
+  // thinned, and the adaptive multiple is over-drawn at full strength to keep the structure
+  // readable. Because adaptiveGridSize only ever doubles, those major lines are a subset of
+  // the fine ones, so the two passes agree everywhere they overlap.
+  const majorSpacing = adaptiveGridSize(gridSize, camera.zoom);
+  const fineScreenSpacing = gridSize * camera.zoom;
+  if (majorSpacing !== gridSize && fineScreenSpacing > MIN_FINE_GRID_PX) {
+    const previousAlpha = ctx.globalAlpha;
+    // Linear ramp across the band where the fine grid is legible-but-crowded, so it dims
+    // smoothly and reaches full strength exactly where the major pass stops coarsening.
+    ctx.globalAlpha = previousAlpha * ((fineScreenSpacing - MIN_FINE_GRID_PX) / (GRID_MIN_SCREEN_PX - MIN_FINE_GRID_PX));
+    strokeGridLines(ctx, size, camera, gridSize);
+    ctx.globalAlpha = previousAlpha;
+  }
+  strokeGridLines(ctx, size, camera, majorSpacing);
+
+  const originScreen = worldToScreen({ x: 0, y: 0 }, camera, size);
   ctx.strokeStyle = colors.gridAxis;
   ctx.beginPath();
   if (originScreen.x >= 0 && originScreen.x <= size.width) {
@@ -372,9 +411,59 @@ function drawComponentBody(
     const bWorld = symbolPointToWorld(bLocal, instance, componentScale);
     strokeArc(ctx, arcGeometry(aWorld, bWorld, arc.bulge), aWorld, bWorld, camera, size);
   }
+
+  // A symbol's own labels are part of its glyph, so they rotate with the instance — the
+  // same context-transform trick the raster body above uses, for the same reason (text,
+  // like a raster, can only be rotated by rotating the canvas).
+  for (const label of symbol.texts ?? []) {
+    const center = worldToScreen(symbolPointToWorld(label, instance, componentScale), camera, size);
+    ctx.save();
+    ctx.translate(center.x, center.y);
+    ctx.rotate(instance.rotation);
+    ctx.fillStyle = selected ? colors.lineSelected : colors.line;
+    ctx.font = `${label.size * componentScale * camera.zoom}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label.text, 0, 0);
+    ctx.restore();
+  }
 }
 
-function drawComponentTag(
+/** Draws a free text annotation centered on its position, at a size given in world units
+ * (see TextAnnotation) so it zooms with the drawing instead of staying a fixed pixel
+ * height like a component's tag. A selected note also gets its box outlined: a run of
+ * glyphs has no endpoint dot or heavier stroke to carry "selected" on its own. */
+function drawTextAnnotation(
+  ctx: CanvasRenderingContext2D,
+  annotation: TextAnnotation,
+  camera: CameraState,
+  size: CanvasSize,
+  colors: Palette,
+  selected: boolean,
+) {
+  const s = worldToScreen(annotation, camera, size);
+  ctx.fillStyle = selected ? colors.lineSelected : colors.annotation;
+  ctx.font = `${annotation.fontSize * camera.zoom}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(annotation.text, s.x, s.y);
+
+  if (selected) {
+    const half = textHalfExtent(annotation.text, annotation.fontSize);
+    const w = half.x * 2 * camera.zoom;
+    const h = half.y * 2 * camera.zoom;
+    ctx.strokeStyle = colors.lineSelected;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 3]);
+    ctx.strokeRect(s.x - w / 2, s.y - h / 2, w, h);
+    ctx.setLineDash([]);
+  }
+}
+
+/** Draws an instance's tag above its symbol and its descriptive name (when it has one —
+ * see ComponentInstance.name) below, straddling the body so the two never overlap each
+ * other regardless of symbol size. */
+function drawComponentLabels(
   ctx: CanvasRenderingContext2D,
   instance: ComponentInstance,
   camera: CameraState,
@@ -390,6 +479,10 @@ function drawComponentTag(
   ctx.textAlign = 'center';
   ctx.textBaseline = 'bottom';
   ctx.fillText(instance.tag, center.x, center.y - offset);
+  if (instance.name) {
+    ctx.textBaseline = 'top';
+    ctx.fillText(instance.name, center.x, center.y + offset);
+  }
 }
 
 function drawAxisLockGlyph(ctx: CanvasRenderingContext2D, a: Vec2, b: Vec2, axis: 'H' | 'V', colors: Palette) {
@@ -408,6 +501,10 @@ function drawSnapIndicator(
   snap: RenderParams['interaction']['hoverSnap'],
   colors: Palette,
 ) {
+  // Now that the grid snap is ungated, a marker is showing essentially all the time, so it
+  // has stopped carrying much as a positive signal — but its *absence* has become the only
+  // feedback that Alt is held and the next click lands freehand. Drawing nothing for 'free'
+  // is therefore load-bearing, not just "nothing to draw": this is the Alt indicator.
   if (!snap || snap.type === 'free') return;
   const s = worldToScreen(snap.point, camera, size);
 

@@ -14,7 +14,7 @@ const RENDER_WIDTH = 1650;
 const RENDER_HEIGHT = 1275;
 
 function emptySelection(): Selection {
-  return { pointIds: new Set(), lineIds: new Set(), arcIds: new Set(), componentIds: new Set() };
+  return { pointIds: new Set(), lineIds: new Set(), arcIds: new Set(), componentIds: new Set(), textIds: new Set() };
 }
 
 /**

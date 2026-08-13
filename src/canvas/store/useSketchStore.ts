@@ -3,7 +3,7 @@ import { suggestTag } from '../../library/tagging';
 import type { AxisLock, ComponentSnapshot, Id, SceneGraphJSON, Selection, Vec2 } from '../../types/geometry';
 import { SceneGraph } from '../sceneGraph';
 
-export type ToolName = 'select' | 'line' | 'arc' | 'point' | 'circle' | 'component';
+export type ToolName = 'select' | 'line' | 'arc' | 'point' | 'circle' | 'text' | 'component';
 
 /** The app's UI theme (canvas + chrome). Print/PDF export (a future feature) should
  * always render with 'light' regardless of this — see renderer.ts's palette comment. */
@@ -21,10 +21,24 @@ interface HistoryEntry {
 
 const MAX_HISTORY = 100;
 const DEFAULT_SNAP_THRESHOLD_PX = 10;
+/** Floor for `snapThresholdPx`. That one number is not only the endpoint/axis snap radius:
+ * it's also every tool's *hit-test* radius (see worldThreshold's callers in selectTool and
+ * pointTool), so a 0 made the canvas unclickable — no point, edge, component or note could
+ * be picked, including to put the setting back. A point handle is drawn at radius 3.5px
+ * (4.5 selected), so the floor is set just past that: whatever the user dials in, clicking
+ * the dot you can actually see still works. "No snapping" is a per-placement decision (hold
+ * Alt), not a setting to dial to zero. Exported so the Toolbar's input agrees with the
+ * clamp instead of silently correcting what was typed. */
+export const MIN_SNAP_THRESHOLD_PX = 4;
+/** Height (in world units) a freshly placed text annotation gets. Matches the on-screen
+ * size of a component's tag label at zoom 1, so a note reads at the same scale as the rest
+ * of the drawing's lettering; per-note sizes are then edited in the Properties Panel.
+ * Exported so the inline editor can size its input like the note it will commit. */
+export const DEFAULT_TEXT_FONT_SIZE = 12;
 const THEME_STORAGE_KEY = 'opnpnid.theme';
 
 function emptySelection(): Selection {
-  return { pointIds: new Set(), lineIds: new Set(), arcIds: new Set(), componentIds: new Set() };
+  return { pointIds: new Set(), lineIds: new Set(), arcIds: new Set(), componentIds: new Set(), textIds: new Set() };
 }
 
 function loadInitialTheme(): Theme {
@@ -49,6 +63,7 @@ interface ClipboardComponent {
   realPartId: string | null;
   snapshot: ComponentSnapshot;
   tag: string;
+  name?: string;
   position: Vec2;
   rotation: number;
 }
@@ -73,6 +88,14 @@ interface ClipboardArc {
   endId: Id;
   bulge: number;
 }
+/** A copied text annotation, carried by value like everything else on this clipboard —
+ * it has no id-based relationship to anything, so it needs no remapping on paste. */
+interface ClipboardText {
+  x: number;
+  y: number;
+  text: string;
+  fontSize: number;
+}
 
 /** A line/arc endpoint that was a component's connection port at copy time, *and* whose
  * owning component was copied along with it — rather than cloning the port as an
@@ -93,12 +116,18 @@ interface SketchClipboard {
   points: ClipboardPoint[];
   lines: ClipboardLine[];
   arcs: ClipboardArc[];
+  texts: ClipboardText[];
   portRefs: ClipboardPortRef[];
 }
 
-/** World-unit offset applied to each successive paste of the same clipboard (a "cascade"
- * so repeated Ctrl/Cmd+V doesn't stack every copy exactly on top of the last one). */
-const PASTE_OFFSET = 20;
+/** Smallest world-unit offset each successive paste of the same clipboard is displaced by
+ * (a "cascade" so repeated Ctrl/Cmd+V doesn't stack every copy exactly on top of the last
+ * one). The offset actually applied is the smallest whole number of grid cells that clears
+ * this — see pasteSelection. It used to be this figure flat, which meant a copy of on-grid
+ * geometry landed off-grid on any grid but the default 20, and the only way back on was to
+ * drag it. Kept as a *minimum* rather than "one cell" so a fine grid still cascades far
+ * enough to see. */
+const MIN_PASTE_OFFSET = 20;
 
 /** Plain JSON round-trip rather than `structuredClone` — `ComponentSnapshot` is already
  * pure JSON data (no Dates/Maps/functions), and `structuredClone` is a fairly recent
@@ -136,7 +165,7 @@ interface SketchStoreState {
    * opened by double-clicking a component on the canvas (see SketchCanvas) or from its
    * Properties Panel entry. */
   realHardwareModalComponentId: Id | null;
-  /** Last-copied selection (Ctrl/Cmd+C — components *and* any selected lines/arcs/points),
+  /** Last-copied selection (Ctrl/Cmd+C — components *and* any selected lines/arcs/points/text),
    * or null if nothing's been copied yet this session. Not persisted with the project — an
    * in-app clipboard, not the OS one, so paste only ever targets this same document. */
   clipboard: SketchClipboard | null;
@@ -161,10 +190,13 @@ interface SketchStoreState {
   setTheme: (theme: Theme) => void;
   toggleTheme: () => void;
   clearSelection: () => void;
-  /** Selects every point, line, arc and component currently in the document (Cmd/Ctrl+A). */
+  /** Selects every point, line, arc, component and text annotation currently in the
+   * document (Cmd/Ctrl+A). */
   selectAll: () => void;
   setGridSize: (size: number) => void;
   setGridVisible: (visible: boolean) => void;
+  /** Clamped to at least MIN_SNAP_THRESHOLD_PX — this doubles as the hit-test radius, so
+   * there's no usable "off". */
   setSnapThresholdPx: (px: number) => void;
   /** Sets the global component-size multiplier and immediately re-lays-out every placed
    * component's ports at the new scale (see SceneGraph.moveComponent's scaleFactor). */
@@ -198,17 +230,27 @@ interface SketchStoreState {
     snapshot: ComponentSnapshot;
   }) => void;
   setComponentTag: (componentId: Id, tag: string) => void;
+  /** Renames a placed component (a descriptive name, not its tag). An empty string
+   * clears the name — see SceneGraph.setComponentName. */
+  setComponentName: (componentId: Id, name: string) => void;
   setComponentRotationDeg: (componentId: Id, degrees: number) => void;
+  /** Places a free text annotation centered on `position` and selects it, so its size is
+   * immediately editable in the Properties Panel. Blank content is a no-op — an empty note
+   * would be invisible and unclickable rather than an empty box waiting to be filled in. */
+  addText: (position: Vec2, text: string) => void;
+  /** Rewrites a note's content. Clearing it deletes the note — see SceneGraph.setTextContent. */
+  setTextContent: (textId: Id, text: string) => void;
+  setTextFontSize: (textId: Id, fontSize: number) => void;
   /** Copies the current selection to the in-app clipboard — components, plus any selected
-   * lines/arcs/points (a selected edge pulls its own endpoints in even if they weren't
-   * individually selected). No-op if nothing's selected (leaves any existing clipboard
-   * content untouched). */
+   * lines/arcs/points/text annotations (a selected edge pulls its own endpoints in even if
+   * they weren't individually selected). No-op if nothing's selected (leaves any existing
+   * clipboard content untouched). */
   copySelection: () => void;
   /** Pastes the clipboard back in — components re-tagged to avoid duplicate tags, free
-   * geometry with fresh point/line/arc ids — offset from its original position (cascading
-   * further on each repeated paste — see PASTE_OFFSET), then selects the newly-pasted
-   * items so the whole batch can be dragged as a group right away. No-op if the clipboard
-   * is empty. */
+   * geometry and text with fresh ids — offset from its original position (cascading
+   * further on each repeated paste, always by whole grid cells — see MIN_PASTE_OFFSET),
+   * then selects the newly-pasted items so the whole batch can be dragged as a group right
+   * away. No-op if the clipboard is empty. */
   pasteSelection: () => void;
   /** Reassigns a placed instance to a different real part within the same category.
    * Refuses (returns false) if the port count would differ from what's currently placed
@@ -257,7 +299,8 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
   // so that flow (deliberately used *while* the Library panel is open) is unaffected.
   setSelection: (selection) =>
     set((s) => {
-      const hasSelection = selection.pointIds.size + selection.lineIds.size + selection.arcIds.size + selection.componentIds.size > 0;
+      const hasSelection =
+        selection.pointIds.size + selection.lineIds.size + selection.arcIds.size + selection.componentIds.size + selection.textIds.size > 0;
       return { selection, libraryPanelOpen: hasSelection ? false : s.libraryPanelOpen };
     }),
   setTheme: (theme) => {
@@ -273,11 +316,12 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
       lineIds: new Set(graph.lines.keys()),
       arcIds: new Set(graph.arcs.keys()),
       componentIds: new Set(graph.components.keys()),
+      textIds: new Set(graph.texts.keys()),
     });
   },
   setGridSize: (size) => set({ gridSize: Math.max(0.1, size) }),
   setGridVisible: (visible) => set({ gridVisible: visible }),
-  setSnapThresholdPx: (px) => set({ snapThresholdPx: Math.max(0, px) }),
+  setSnapThresholdPx: (px) => set({ snapThresholdPx: Math.max(MIN_SNAP_THRESHOLD_PX, px) }),
 
   setComponentScale: (rawScale) => {
     const scale = Math.max(0.1, rawScale);
@@ -398,7 +442,7 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
     const before = graph.toJSON();
     const arc = graph.filletAtPoint(pointId, radius);
     if (!arc) return false;
-    set({ selection: { pointIds: new Set(), lineIds: new Set(), arcIds: new Set([arc.id]), componentIds: new Set() } });
+    set({ selection: { ...emptySelection(), arcIds: new Set([arc.id]) } });
     get().commit(before);
     return true;
   },
@@ -407,7 +451,7 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
     const { graph, componentScale } = get();
     const before = graph.toJSON();
     const instance = graph.addComponent({ categoryId, realPartId, tag, position, rotation: 0, snapshot, scaleFactor: componentScale });
-    set({ selection: { pointIds: new Set(), lineIds: new Set(), arcIds: new Set(), componentIds: new Set([instance.id]) } });
+    set({ selection: { ...emptySelection(), componentIds: new Set([instance.id]) } });
     get().commit(before);
   },
 
@@ -417,12 +461,39 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
     get().commit(before);
   },
 
+  setComponentName: (componentId, name) => {
+    const before = get().graph.toJSON();
+    get().graph.setComponentName(componentId, name);
+    get().commit(before);
+  },
+
   setComponentRotationDeg: (componentId, degrees) => {
     const { graph, componentScale } = get();
     const instance = graph.components.get(componentId);
     if (!instance) return;
     const before = graph.toJSON();
     graph.moveComponent(componentId, instance.position, (degrees * Math.PI) / 180, componentScale);
+    get().commit(before);
+  },
+
+  addText: (position, text) => {
+    if (!text.trim()) return;
+    const { graph } = get();
+    const before = graph.toJSON();
+    const annotation = graph.addText(position.x, position.y, text, DEFAULT_TEXT_FONT_SIZE);
+    set({ selection: { ...emptySelection(), textIds: new Set([annotation.id]) } });
+    get().commit(before);
+  },
+
+  setTextContent: (textId, text) => {
+    const before = get().graph.toJSON();
+    get().graph.setTextContent(textId, text);
+    get().commit(before);
+  },
+
+  setTextFontSize: (textId, fontSize) => {
+    const before = get().graph.toJSON();
+    get().graph.setTextFontSize(textId, fontSize);
     get().commit(before);
   },
 
@@ -448,6 +519,7 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
         realPartId: instance.realPartId,
         snapshot: cloneSnapshot(instance.snapshot),
         tag: instance.tag,
+        name: instance.name,
         position: { ...instance.position },
         rotation: instance.rotation,
       });
@@ -512,15 +584,25 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
       }
     }
 
-    if (components.length === 0 && points.length === 0) return;
-    set({ clipboard: { components, points, lines, arcs, portRefs }, pasteCount: 0 });
+    const texts: ClipboardText[] = [];
+    for (const id of selection.textIds) {
+      const annotation = graph.texts.get(id);
+      if (annotation) texts.push({ x: annotation.x, y: annotation.y, text: annotation.text, fontSize: annotation.fontSize });
+    }
+
+    if (components.length === 0 && points.length === 0 && texts.length === 0) return;
+    set({ clipboard: { components, points, lines, arcs, texts, portRefs }, pasteCount: 0 });
   },
 
   pasteSelection: () => {
-    const { graph, clipboard, pasteCount, componentScale } = get();
-    if (!clipboard || (clipboard.components.length === 0 && clipboard.points.length === 0)) return;
+    const { graph, clipboard, pasteCount, componentScale, gridSize } = get();
+    if (!clipboard || (clipboard.components.length === 0 && clipboard.points.length === 0 && clipboard.texts.length === 0)) return;
     const before = graph.toJSON();
-    const offset = PASTE_OFFSET * (pasteCount + 1);
+    // A whole number of cells, so a pasted copy keeps whatever grid alignment its original
+    // had — the same "everything lands on the grid" rule every placement and drag follows.
+    // With no grid at all there's nothing to stay aligned to, so the bare minimum stands.
+    const step = gridSize > 0 ? Math.max(1, Math.ceil(MIN_PASTE_OFFSET / gridSize)) * gridSize : MIN_PASTE_OFFSET;
+    const offset = step * (pasteCount + 1);
 
     const existingTags = new Set([...graph.components.values()].map((c) => c.tag));
     const newComponentIds: Id[] = [];
@@ -534,6 +616,9 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
         categoryId: item.categoryId,
         realPartId: item.realPartId,
         tag,
+        // The descriptive name *is* carried verbatim — unlike the tag it's not an
+        // identifier, so a copy sharing its original's name is correct, not a clash.
+        name: item.name,
         position: { x: item.position.x + offset, y: item.position.y + offset },
         rotation: item.rotation,
         snapshot: cloneSnapshot(item.snapshot),
@@ -582,7 +667,12 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
       if (created) newArcIds.push(created.id);
     }
 
-    // Select the whole freshly-pasted batch — points, lines, arcs *and* components
+    const newTextIds: Id[] = [];
+    for (const t of clipboard.texts) {
+      newTextIds.push(graph.addText(t.x + offset, t.y + offset, t.text, t.fontSize).id);
+    }
+
+    // Select the whole freshly-pasted batch — points, lines, arcs, components *and* text
     // together — so it can be dragged into place as one group right away (see
     // selectTool.ts's group drag).
     set({
@@ -591,6 +681,7 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
         lineIds: new Set(newLineIds),
         arcIds: new Set(newArcIds),
         componentIds: new Set(newComponentIds),
+        textIds: new Set(newTextIds),
       },
       pasteCount: pasteCount + 1,
     });
@@ -621,6 +712,7 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
     for (const arcId of arcIds) graph.removeArc(arcId);
     for (const pointId of selection.pointIds) graph.removePoint(pointId);
     for (const componentId of selection.componentIds) graph.removeComponent(componentId);
+    for (const textId of selection.textIds) graph.removeText(textId);
     set({ selection: emptySelection() });
     get().commit(before);
   },

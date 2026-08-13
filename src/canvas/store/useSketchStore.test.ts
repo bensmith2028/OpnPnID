@@ -1,17 +1,21 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { ComponentSnapshot } from '../../types/geometry';
 import { generatePlaceholderSymbol } from '../../library/builtinSymbols';
-import { useSketchStore } from './useSketchStore';
+import { MIN_SNAP_THRESHOLD_PX, useSketchStore } from './useSketchStore';
 
 function sampleSnapshot(portCount = 2): ComponentSnapshot {
   return { familyName: 'Valve', categoryName: 'Test Valve', symbol: generatePlaceholderSymbol(portCount), realPart: null };
 }
 
 /** Fresh document + clipboard before every test — the store is a module-level singleton,
- * so state from one test would otherwise leak into the next. */
+ * so state from one test would otherwise leak into the next. The grid and snap settings are
+ * reset for the same reason: `newProject` deliberately leaves them alone (they're workspace
+ * preferences, not document content), and the paste offset now depends on the grid. */
 beforeEach(() => {
   useSketchStore.getState().newProject();
   useSketchStore.setState({ clipboard: null, pasteCount: 0 });
+  useSketchStore.getState().setGridSize(20);
+  useSketchStore.getState().setSnapThresholdPx(10);
 });
 
 describe('copySelection / pasteSelection', () => {
@@ -55,6 +59,34 @@ describe('copySelection / pasteSelection', () => {
     expect(graph.components.size).toBe(3);
     const secondPasteId = [...selection.componentIds][0];
     expect(graph.components.get(secondPasteId)!.position).toEqual({ x: 40, y: 40 });
+  });
+
+  /** The cascade used to be a hardcoded 20 world units, so on any other grid a copy of
+   * on-grid geometry landed off-grid — and the only way back on was to drag it. */
+  it('offsets by a whole number of grid cells, so a pasted copy stays on the grid', () => {
+    useSketchStore.getState().setGridSize(30);
+    const { graph } = useSketchStore.getState();
+    const p = graph.addPoint(30, 60); // on the 30 grid
+    useSketchStore.setState((s) => ({ selection: { ...s.selection, pointIds: new Set([p.id]) } }));
+    useSketchStore.getState().copySelection();
+
+    useSketchStore.getState().pasteSelection();
+    const pasted = useSketchStore.getState().graph.points.get([...useSketchStore.getState().selection.pointIds][0]!)!;
+    // One cell (30) clears the 20-unit minimum on its own, so that's the whole offset.
+    expect(pasted).toMatchObject({ x: 60, y: 90 });
+  });
+
+  it('takes as many cells as it needs to stay visible on a fine grid', () => {
+    useSketchStore.getState().setGridSize(3);
+    const { graph } = useSketchStore.getState();
+    const p = graph.addPoint(0, 0);
+    useSketchStore.setState((s) => ({ selection: { ...s.selection, pointIds: new Set([p.id]) } }));
+    useSketchStore.getState().copySelection();
+
+    useSketchStore.getState().pasteSelection();
+    const pasted = useSketchStore.getState().graph.points.get([...useSketchStore.getState().selection.pointIds][0]!)!;
+    // 7 cells of 3 = 21, the smallest whole number of cells clearing the 20-unit minimum.
+    expect(pasted).toMatchObject({ x: 21, y: 21 });
   });
 
   it('does nothing when the clipboard is empty', () => {
@@ -208,39 +240,122 @@ describe('copySelection / pasteSelection', () => {
   });
 });
 
+describe('setComponentName', () => {
+  /** Places one component and returns its id, selected — the starting point for both
+   * tests below. */
+  function placeOne(): string {
+    useSketchStore.getState().placeComponent({ categoryId: 'cat1', realPartId: null, position: { x: 0, y: 0 }, tag: 'V-101', snapshot: sampleSnapshot() });
+    return [...useSketchStore.getState().selection.componentIds][0];
+  }
+
+  it('renames through history, so undo/redo restores the previous name', () => {
+    const componentId = placeOne();
+    useSketchStore.getState().setComponentName(componentId, 'Reactor feed pump');
+    expect(useSketchStore.getState().graph.components.get(componentId)!.name).toBe('Reactor feed pump');
+
+    useSketchStore.getState().undo();
+    expect(useSketchStore.getState().graph.components.get(componentId)!.name).toBeUndefined();
+
+    useSketchStore.getState().redo();
+    expect(useSketchStore.getState().graph.components.get(componentId)!.name).toBe('Reactor feed pump');
+  });
+
+  it('carries the name onto a pasted copy verbatim (unlike the tag, which is regenerated)', () => {
+    const componentId = placeOne();
+    useSketchStore.getState().setComponentName(componentId, 'Reactor feed pump');
+    useSketchStore.setState((s) => ({ selection: { ...s.selection, componentIds: new Set([componentId]) } }));
+
+    useSketchStore.getState().copySelection();
+    useSketchStore.getState().pasteSelection();
+    const { graph, selection } = useSketchStore.getState();
+    expect(graph.components.get([...selection.componentIds][0]!)!.name).toBe('Reactor feed pump');
+  });
+});
+
+/** `snapThresholdPx` is also every tool's hit-test radius (worldThreshold), so the old
+ * `Math.max(0, px)` clamp let the toolbar's "Snap px" field lock the user out of their own
+ * canvas: at 0 nothing could be picked — no point, edge, component or note — including the
+ * field's own value to put it back. */
+describe('setSnapThresholdPx', () => {
+  it('refuses to go below the floor that keeps things pickable', () => {
+    useSketchStore.getState().setSnapThresholdPx(0);
+    expect(useSketchStore.getState().snapThresholdPx).toBe(MIN_SNAP_THRESHOLD_PX);
+    useSketchStore.getState().setSnapThresholdPx(-5);
+    expect(useSketchStore.getState().snapThresholdPx).toBe(MIN_SNAP_THRESHOLD_PX);
+  });
+
+  it('passes any value at or above the floor straight through', () => {
+    useSketchStore.getState().setSnapThresholdPx(MIN_SNAP_THRESHOLD_PX);
+    expect(useSketchStore.getState().snapThresholdPx).toBe(MIN_SNAP_THRESHOLD_PX);
+    useSketchStore.getState().setSnapThresholdPx(25);
+    expect(useSketchStore.getState().snapThresholdPx).toBe(25);
+  });
+});
+
+/** Arming is now the *only* thing a category row does while browsing the library — its
+ * name button calls this directly (there's no separate "Place" button any more), so what
+ * one click leaves behind is worth pinning down. */
+describe('armComponent', () => {
+  it('switches to the component tool and remembers what to place', () => {
+    useSketchStore.getState().armComponent('cat1', null);
+    expect(useSketchStore.getState().activeTool).toBe('component');
+    expect(useSketchStore.getState().armedComponent).toEqual({ categoryId: 'cat1', realPartId: null });
+  });
+
+  it('clears the selection, so the armed click lands on the canvas instead of dragging whatever was selected', () => {
+    useSketchStore.setState((s) => ({ selection: { ...s.selection, lineIds: new Set(['ln1']) } }));
+    useSketchStore.getState().armComponent('cat1', null);
+    expect(useSketchStore.getState().selection.lineIds.size).toBe(0);
+  });
+
+  it('re-arms to the newest category when a second row is clicked without placing the first', () => {
+    useSketchStore.getState().armComponent('cat1', null);
+    useSketchStore.getState().armComponent('cat2', 'part9');
+    expect(useSketchStore.getState().armedComponent).toEqual({ categoryId: 'cat2', realPartId: 'part9' });
+  });
+
+  it('is disarmed by picking any other tool, so a stray canvas click can\'t drop a component later', () => {
+    useSketchStore.getState().armComponent('cat1', null);
+    useSketchStore.getState().setTool('select');
+    expect(useSketchStore.getState().armedComponent).toBeNull();
+  });
+});
+
 describe('setSelection auto-closing the Library panel', () => {
   it('closes the Library panel when selecting something non-empty', () => {
     useSketchStore.setState({ libraryPanelOpen: true });
-    useSketchStore.getState().setSelection({ pointIds: new Set(), lineIds: new Set(['ln1']), arcIds: new Set(), componentIds: new Set() });
+    useSketchStore.getState().setSelection({ pointIds: new Set(), lineIds: new Set(['ln1']), arcIds: new Set(), componentIds: new Set(), textIds: new Set() });
     expect(useSketchStore.getState().libraryPanelOpen).toBe(false);
   });
 
   it('leaves the Library panel open when the resulting selection is empty', () => {
     useSketchStore.setState({ libraryPanelOpen: true });
-    useSketchStore.getState().setSelection({ pointIds: new Set(), lineIds: new Set(), arcIds: new Set(), componentIds: new Set() });
+    useSketchStore.getState().setSelection({ pointIds: new Set(), lineIds: new Set(), arcIds: new Set(), componentIds: new Set(), textIds: new Set() });
     expect(useSketchStore.getState().libraryPanelOpen).toBe(true);
   });
 
   it('does not reopen the Library panel when it is already closed', () => {
     useSketchStore.setState({ libraryPanelOpen: false });
-    useSketchStore.getState().setSelection({ pointIds: new Set(['pt1']), lineIds: new Set(), arcIds: new Set(), componentIds: new Set() });
+    useSketchStore.getState().setSelection({ pointIds: new Set(['pt1']), lineIds: new Set(), arcIds: new Set(), componentIds: new Set(), textIds: new Set() });
     expect(useSketchStore.getState().libraryPanelOpen).toBe(false);
   });
 });
 
 describe('selectAll', () => {
-  it('selects every point, line, arc and component in the document', () => {
+  it('selects every point, line, arc, component and text annotation in the document', () => {
     const { placeComponent, graph } = useSketchStore.getState();
     placeComponent({ categoryId: 'cat1', realPartId: null, position: { x: 0, y: 0 }, tag: 'V-101', snapshot: sampleSnapshot() });
     graph.addPoint(5, 5);
     const [a, b] = [graph.addPoint(0, 10), graph.addPoint(10, 10)];
     graph.addLine(a.id, b.id);
+    graph.addText(30, 30, 'Feed header', 12);
 
     useSketchStore.getState().selectAll();
     const { selection } = useSketchStore.getState();
     expect(selection.componentIds.size).toBe(1);
     expect(selection.pointIds.size).toBe(graph.points.size);
     expect(selection.lineIds.size).toBe(graph.lines.size);
+    expect(selection.textIds.size).toBe(1);
   });
 
   it('closes the Library panel, same as any other non-empty selection', () => {
@@ -249,5 +364,59 @@ describe('selectAll', () => {
     useSketchStore.setState({ libraryPanelOpen: true }); // placeComponent bypasses the auto-close; reset for this test
     useSketchStore.getState().selectAll();
     expect(useSketchStore.getState().libraryPanelOpen).toBe(false);
+  });
+});
+
+describe('text annotations', () => {
+  it('places a note, selects it, and makes the placement undoable', () => {
+    useSketchStore.getState().addText({ x: 10, y: 20 }, 'Feed header');
+    const { graph, selection } = useSketchStore.getState();
+    expect(graph.texts.size).toBe(1);
+    expect(selection.textIds.size).toBe(1);
+
+    useSketchStore.getState().undo();
+    expect(useSketchStore.getState().graph.texts.size).toBe(0);
+    useSketchStore.getState().redo();
+    expect(useSketchStore.getState().graph.texts.size).toBe(1);
+  });
+
+  it('ignores a blank note rather than placing an invisible one', () => {
+    useSketchStore.getState().addText({ x: 0, y: 0 }, '   ');
+    expect(useSketchStore.getState().graph.texts.size).toBe(0);
+    expect(useSketchStore.getState().past).toHaveLength(0);
+  });
+
+  it('deletes selected notes along with the rest of the selection', () => {
+    const { graph } = useSketchStore.getState();
+    const a = graph.addPoint(0, 0);
+    const b = graph.addPoint(10, 0);
+    const line = graph.addLine(a.id, b.id)!;
+    const note = graph.addText(30, 30, 'Feed header', 12);
+    useSketchStore.getState().setSelection({
+      pointIds: new Set(),
+      lineIds: new Set([line.id]),
+      arcIds: new Set(),
+      componentIds: new Set(),
+      textIds: new Set([note.id]),
+    });
+
+    useSketchStore.getState().deleteSelection();
+    expect(useSketchStore.getState().graph.texts.size).toBe(0);
+    expect(useSketchStore.getState().graph.lines.size).toBe(0);
+  });
+
+  it('copies and pastes a note at the cascading offset, with its own size preserved', () => {
+    const { graph } = useSketchStore.getState();
+    const note = graph.addText(0, 0, 'Feed header', 8);
+    useSketchStore.setState((s) => ({ selection: { ...s.selection, textIds: new Set([note.id]) } }));
+
+    useSketchStore.getState().copySelection();
+    expect(useSketchStore.getState().clipboard?.texts).toHaveLength(1);
+
+    useSketchStore.getState().pasteSelection();
+    const { selection } = useSketchStore.getState();
+    expect(graph.texts.size).toBe(2);
+    const pasted = graph.texts.get([...selection.textIds][0])!;
+    expect(pasted).toMatchObject({ x: 20, y: 20, text: 'Feed header', fontSize: 8 });
   });
 });

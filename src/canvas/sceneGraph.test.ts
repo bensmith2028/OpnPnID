@@ -625,4 +625,86 @@ describe('SceneGraph components', () => {
       expect(restored.componentOwning(conn.pointId)).toBe(restoredInstance.id);
     }
   });
+
+  it('setComponentName trims, survives a JSON round-trip, and clears back to absent when emptied', () => {
+    const g = new SceneGraph();
+    const instance = g.addComponent({
+      categoryId: 'gc1',
+      realPartId: null,
+      tag: 'V-110',
+      position: { x: 0, y: 0 },
+      rotation: 0,
+      snapshot: sampleSnapshot(2),
+    });
+    expect(instance.name).toBeUndefined(); // freshly placed components are unnamed
+
+    g.setComponentName(instance.id, '  Reactor feed pump  ');
+    expect(instance.name).toBe('Reactor feed pump');
+    const restored = [...SceneGraph.fromJSON(g.toJSON()).components.values()][0];
+    expect(restored.name).toBe('Reactor feed pump');
+
+    g.setComponentName(instance.id, '   ');
+    expect('name' in instance).toBe(false);
+  });
+});
+
+describe('SceneGraph text annotations', () => {
+  it('places a note centered on its position, with its content trimmed', () => {
+    const g = new SceneGraph();
+    const note = g.addText(10, 20, '  Feed header  ', 12);
+    expect(g.texts.get(note.id)).toMatchObject({ x: 10, y: 20, text: 'Feed header', fontSize: 12 });
+  });
+
+  it('keeps notes out of the point graph, so nothing snaps to or connects with one', () => {
+    const g = new SceneGraph();
+    const note = g.addText(0, 0, 'Note', 12);
+    expect(g.points.size).toBe(0);
+    expect(g.nearestPoint({ x: 0, y: 0 })).toBeNull();
+    expect(g.pointDegree(note.id)).toBe(0);
+  });
+
+  it('moves and resizes a note; a non-positive size is ignored rather than applied', () => {
+    const g = new SceneGraph();
+    const note = g.addText(0, 0, 'Note', 12);
+    g.moveText(note.id, -5, 7);
+    g.setTextFontSize(note.id, 20);
+    expect(g.texts.get(note.id)).toMatchObject({ x: -5, y: 7, fontSize: 20 });
+    g.setTextFontSize(note.id, 0);
+    expect(g.texts.get(note.id)!.fontSize).toBe(20);
+  });
+
+  it('deletes a note when its content is cleared, rather than keeping an invisible one', () => {
+    const g = new SceneGraph();
+    const note = g.addText(0, 0, 'Note', 12);
+    g.setTextContent(note.id, '   ');
+    expect(g.texts.has(note.id)).toBe(false);
+  });
+
+  it('round-trips notes through toJSON/fromJSON (which is what gives them undo and save/load)', () => {
+    const g = new SceneGraph();
+    const note = g.addText(3, 4, 'Reactor loop', 8);
+    const restored = SceneGraph.fromJSON(g.toJSON());
+    expect(restored.texts.get(note.id)).toEqual({ id: note.id, x: 3, y: 4, text: 'Reactor loop', fontSize: 8 });
+  });
+
+  it('loads a scene saved before notes existed (no texts list at all)', () => {
+    const g = new SceneGraph();
+    const a = g.addPoint(0, 0);
+    const b = g.addPoint(10, 0);
+    g.addLine(a.id, b.id);
+    const legacy = g.toJSON() as Partial<ReturnType<SceneGraph['toJSON']>>;
+    delete legacy.texts;
+    const restored = SceneGraph.fromJSON(legacy as ReturnType<SceneGraph['toJSON']>);
+    expect(restored.texts.size).toBe(0);
+    expect(restored.lines.size).toBe(1);
+  });
+
+  it('bumps the id counter past loaded note ids, so a freshly placed note cannot collide', () => {
+    const g = new SceneGraph();
+    g.addText(0, 0, 'Loaded', 12, 'txt_zzz');
+    const restored = SceneGraph.fromJSON(g.toJSON());
+    const fresh = restored.addText(1, 1, 'Fresh', 12);
+    expect(fresh.id).not.toBe('txt_zzz');
+    expect(restored.texts.size).toBe(2);
+  });
 });

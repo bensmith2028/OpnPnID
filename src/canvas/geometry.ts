@@ -95,6 +95,22 @@ export function nearestGridPoint(p: Vec2, gridSize: number): Vec2 {
   };
 }
 
+/** Mean advance width of a sans-serif glyph as a fraction of the font's em size. */
+const AVERAGE_GLYPH_ASPECT = 0.55;
+
+/**
+ * Half-width and half-height of a run of text drawn centered on its position at
+ * `fontSize` — the box a text annotation occupies, for hit-testing and view-fitting.
+ * Deliberately an estimate from the string's length rather than `measureText`: callers
+ * (the select tool mid-drag, the symbol editor, the PDF export's camera fit) have no
+ * canvas context in scope, and both canvases need the *same* box to agree on what a click
+ * lands in — a stable approximation serves that better than exact ink extents that vary
+ * with font and zoom.
+ */
+export function textHalfExtent(text: string, fontSize: number): Vec2 {
+  return { x: (text.length * fontSize * AVERAGE_GLYPH_ASPECT) / 2, y: fontSize / 2 };
+}
+
 export interface Projection {
   point: Vec2;
   t: number; // 0..1 along segment, may fall outside if closest point is beyond an endpoint

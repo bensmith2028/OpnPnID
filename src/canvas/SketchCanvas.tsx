@@ -1,18 +1,32 @@
-import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { isSymbolEditorOpen } from '../library/symbolEditorActive';
 import { applyTextFieldMenuAction, isTextEditableFocus, onNativeMenuAction } from '../platform/menuBridge';
+import type { Id, Vec2 } from '../types/geometry';
 import { render } from './renderer';
-import { useSketchStore } from './store/useSketchStore';
+import { DEFAULT_TEXT_FONT_SIZE, useSketchStore } from './store/useSketchStore';
 import type { ToolCtx } from './tools/drawLineTool';
 import { drawLineCancel, drawLineOnPointerDown, drawLineOnPointerMove } from './tools/drawLineTool';
 import { drawArcCancel, drawArcOnPointerDown, drawArcOnPointerMove } from './tools/drawArcTool';
 import { drawCircleCancel, drawCircleOnPointerDown, drawCircleOnPointerMove } from './tools/drawCircleTool';
 import { componentOnPointerDown, componentOnPointerMove } from './tools/componentTool';
 import { pointOnPointerDown, pointOnPointerMove } from './tools/pointTool';
-import { componentAtWorld, selectOnPointerDown, selectOnPointerMove, selectOnPointerUp } from './tools/selectTool';
+import { componentAtWorld, selectOnPointerDown, selectOnPointerMove, selectOnPointerUp, textAtWorld } from './tools/selectTool';
+import { textCancel, textOnPointerMove, textPlacementPoint } from './tools/textTool';
 import { createInteractionState } from './tools/types';
 import type { CanvasSize } from './tools/types';
-import { screenToWorld, zoomAround } from './viewport';
+import { screenToWorld, worldToScreen, zoomAround } from './viewport';
+
+/** The inline text editor's state: an `<input>` positioned over the canvas at `world`,
+ * standing in for the note it's writing. `textId` is the annotation being re-edited, or
+ * null while placing a new one — the only difference between the two flows is which store
+ * action the commit calls. Nothing reaches the document until that commit, so abandoning
+ * the editor (Escape) leaves no trace and pushes no undo entry. */
+interface TextEditorState {
+  textId: Id | null;
+  world: Vec2;
+  fontSize: number;
+  value: string;
+}
 
 export function SketchCanvas() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -67,6 +81,50 @@ export function SketchCanvas() {
 
   const toolCtx: ToolCtx = { interaction: interactionRef.current, requestRedraw };
 
+  /** The open inline text editor, or null. Mirrored into a ref because the commit path is
+   * driven by the input's own `blur` — whose timing relative to a canvas click isn't
+   * something to depend on — so "is an editor still open?" has to be answerable
+   * synchronously, mid-handler, rather than from the last render's closure. */
+  const [textEditor, setTextEditor] = useState<TextEditorState | null>(null);
+  const textEditorRef = useRef<TextEditorState | null>(null);
+  const putTextEditor = useCallback((next: TextEditorState | null) => {
+    textEditorRef.current = next;
+    setTextEditor(next);
+  }, []);
+
+  /** Writes the open editor into the document and closes it. Closes *first*, so the blur
+   * that follows a click elsewhere finds nothing left to commit instead of committing the
+   * same note twice. An unchanged re-edit is skipped rather than pushed onto the undo
+   * stack, the same way the Properties Panel's name field does it. */
+  const commitTextEditor = useCallback(() => {
+    const editor = textEditorRef.current;
+    if (!editor) return;
+    putTextEditor(null);
+    const store = useSketchStore.getState();
+    if (editor.textId === null) {
+      store.addText(editor.world, editor.value);
+    } else if (editor.value.trim() !== store.graph.texts.get(editor.textId)?.text) {
+      store.setTextContent(editor.textId, editor.value);
+    }
+  }, [putTextEditor]);
+
+  /** Opens the editor on the note under `world`, or on a new one snapped to that spot.
+   * Clicking an existing note with the Text tool re-opens it rather than stacking another
+   * one on top of it — same "click the thing to edit the thing" as double-clicking one
+   * with the Select tool. */
+  const openTextEditor = useCallback(
+    (world: Vec2) => {
+      const existing = textAtWorld(world);
+      if (existing) {
+        putTextEditor({ textId: existing.id, world: { x: existing.x, y: existing.y }, fontSize: existing.fontSize, value: existing.text });
+      } else {
+        putTextEditor({ textId: null, world: textPlacementPoint(world, toolCtx), fontSize: DEFAULT_TEXT_FONT_SIZE, value: '' });
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [putTextEditor],
+  );
+
   // Resize the canvas backing store to match its container, accounting for DPR.
   useLayoutEffect(() => {
     const container = containerRef.current;
@@ -96,11 +154,16 @@ export function SketchCanvas() {
     requestRedraw();
   }, [version, selection, activeTool, camera, gridSize, gridVisible, theme, componentScale, requestRedraw]);
 
-  // Cancel any in-progress line/arc/circle gesture when switching away from that tool.
+  // Cancel any in-progress line/arc/circle gesture, the Text tool's placement preview —
+  // and any half-typed note — when switching away from that tool. Covers both ways the
+  // tool can change: the toolbar buttons and the V/L/A/P/C/T hotkeys both go through
+  // `setTool`, and Escape lands on the Select tool the same way.
   useEffect(() => {
     if (activeTool !== 'line') drawLineCancel(toolCtx);
     if (activeTool !== 'arc') drawArcCancel(toolCtx);
     if (activeTool !== 'circle') drawCircleCancel(toolCtx);
+    if (activeTool !== 'text') textCancel(toolCtx);
+    putTextEditor(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTool]);
 
@@ -112,6 +175,13 @@ export function SketchCanvas() {
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
+      // A click on the canvas finishes an open inline editor and does nothing else:
+      // committing *and* starting the next gesture in the same click would depend on
+      // whether the input's blur lands before or after this handler.
+      if (textEditorRef.current) {
+        commitTextEditor();
+        return;
+      }
       canvasRef.current?.setPointerCapture(e.pointerId);
       const isPanGesture = e.button === 1 || (e.button === 0 && spaceHeldRef.current);
       if (isPanGesture) {
@@ -127,11 +197,17 @@ export function SketchCanvas() {
       else if (activeTool === 'arc') drawArcOnPointerDown(world, e.shiftKey, toolCtx);
       else if (activeTool === 'circle') drawCircleOnPointerDown(world, toolCtx);
       else if (activeTool === 'point') pointOnPointerDown(world, toolCtx);
-      else if (activeTool === 'component') void componentOnPointerDown(world, toolCtx);
+      else if (activeTool === 'text') {
+        // Keep the browser's own focus handling out of this one: the click's default
+        // action moves focus to the document body, which would immediately blur (and so
+        // close) the editor being opened here.
+        e.preventDefault();
+        openTextEditor(world);
+      } else if (activeTool === 'component') void componentOnPointerDown(world, toolCtx);
       else selectOnPointerDown(world, e.shiftKey || e.ctrlKey || e.metaKey, toolCtx);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [activeTool, getWorld],
+    [activeTool, getWorld, commitTextEditor, openTextEditor],
   );
 
   const onPointerMove = useCallback(
@@ -153,6 +229,7 @@ export function SketchCanvas() {
       else if (activeTool === 'arc') drawArcOnPointerMove(world, toolCtx);
       else if (activeTool === 'circle') drawCircleOnPointerMove(world, toolCtx);
       else if (activeTool === 'point') pointOnPointerMove(world, toolCtx);
+      else if (activeTool === 'text') textOnPointerMove(world, toolCtx);
       else if (activeTool === 'component') componentOnPointerMove(world, toolCtx);
       else selectOnPointerMove(world, toolCtx);
     },
@@ -173,19 +250,36 @@ export function SketchCanvas() {
     [activeTool],
   );
 
+  // The hover preview tracks the cursor, so it has to go when the cursor does — otherwise
+  // it stays parked at the canvas edge while the pointer is off over the toolbar/sidebar.
+  // Deliberately tool-agnostic (Text, Point and Component all paint into the same slot);
+  // an in-progress line/arc chain is unaffected because its preview is drawn from its own
+  // `snap`, and a drag holds pointer capture, which suppresses this event entirely.
+  const onPointerLeave = useCallback(() => {
+    if (!interactionRef.current.hoverSnap) return;
+    interactionRef.current.hoverSnap = null;
+    requestRedraw();
+  }, [requestRedraw]);
+
   // Double-clicking a placed component opens the real-hardware assignment modal — the
   // one place a component's real part gets picked/added now that LibraryPanel only
-  // places bare category symbols.
+  // places bare category symbols. Double-clicking a text annotation re-opens it in the
+  // inline editor, so notes are edited where they sit rather than only in the sidebar.
   const onDoubleClick = useCallback(
     (e: React.MouseEvent) => {
       if (activeTool !== 'select') return;
       const rect = canvasRef.current!.getBoundingClientRect();
       const screen = { x: e.clientX - rect.left, y: e.clientY - rect.top };
       const world = screenToWorld(screen, useSketchStore.getState().camera, sizeRef.current);
+      const annotation = textAtWorld(world);
+      if (annotation) {
+        openTextEditor(world);
+        return;
+      }
       const instance = componentAtWorld(world);
       if (instance) useSketchStore.getState().openRealHardwareModal(instance.id);
     },
-    [activeTool],
+    [activeTool, openTextEditor],
   );
 
   const onWheel = useCallback((e: React.WheelEvent) => {
@@ -219,6 +313,7 @@ export function SketchCanvas() {
         if (activeTool === 'line') drawLineCancel(toolCtx);
         if (activeTool === 'arc') drawArcCancel(toolCtx);
         if (activeTool === 'circle') drawCircleCancel(toolCtx);
+        if (activeTool === 'text') textCancel(toolCtx);
         // Escape always lands back on the select tool (which also clears selection);
         // if already selecting, just clear the selection instead of a no-op tool switch.
         if (activeTool === 'select') useSketchStore.getState().clearSelection();
@@ -244,6 +339,7 @@ export function SketchCanvas() {
         else if (e.key.toLowerCase() === 'a') useSketchStore.getState().setTool('arc');
         else if (e.key.toLowerCase() === 'p') useSketchStore.getState().setTool('point');
         else if (e.key.toLowerCase() === 'c') useSketchStore.getState().setTool('circle');
+        else if (e.key.toLowerCase() === 't') useSketchStore.getState().setTool('text');
       }
     };
     const onKeyUp = (e: KeyboardEvent) => {
@@ -282,6 +378,11 @@ export function SketchCanvas() {
     [],
   );
 
+  // Recomputed on every render (which `camera` being a subscribed value guarantees for
+  // pan/zoom), so an open editor tracks the note's world position instead of sticking to
+  // the pixel it was opened at.
+  const textEditorScreen = textEditor ? worldToScreen(textEditor.world, camera, sizeRef.current) : null;
+
   return (
     <div ref={containerRef} className="sketch-canvas-container">
       <canvas
@@ -289,9 +390,33 @@ export function SketchCanvas() {
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
+        onPointerLeave={onPointerLeave}
         onDoubleClick={onDoubleClick}
         onWheel={onWheel}
       />
+      {textEditor && textEditorScreen && (
+        // Positioned and sized in screen space from the note's world position, so the
+        // input sits exactly where the committed text will be drawn — typing in place
+        // rather than in a dialog. Enter commits (via blur, the same idiom the Properties
+        // Panel's fields use), Escape abandons the edit.
+        <input
+          className="canvas-text-editor"
+          autoFocus
+          value={textEditor.value}
+          placeholder="Type a note…"
+          style={{
+            left: textEditorScreen.x,
+            top: textEditorScreen.y,
+            fontSize: `${textEditor.fontSize * camera.zoom}px`,
+          }}
+          onChange={(e) => putTextEditor({ ...textEditor, value: e.target.value })}
+          onBlur={commitTextEditor}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') e.currentTarget.blur();
+            else if (e.key === 'Escape') putTextEditor(null);
+          }}
+        />
+      )}
     </div>
   );
 }

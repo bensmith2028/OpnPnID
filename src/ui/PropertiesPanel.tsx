@@ -14,18 +14,20 @@ function normalizeDegrees(deg: number): number {
 export function PropertiesPanel() {
   const selection = useSketchStore((s) => s.selection);
 
-  const onlyPoint = selection.pointIds.size === 1 && selection.lineIds.size === 0 && selection.arcIds.size === 0 && selection.componentIds.size === 0;
-  const onlyLine = selection.lineIds.size === 1 && selection.pointIds.size === 0 && selection.arcIds.size === 0 && selection.componentIds.size === 0;
-  const onlyArc = selection.arcIds.size === 1 && selection.pointIds.size === 0 && selection.lineIds.size === 0 && selection.componentIds.size === 0;
-  const onlyComponent = selection.componentIds.size === 1 && selection.pointIds.size === 0 && selection.lineIds.size === 0 && selection.arcIds.size === 0;
+  // "Exactly one thing, of one kind" — with five kinds now, spelled as a total count plus
+  // the one set that holds it, rather than four "every other set is empty" conjunctions.
+  const total = selection.pointIds.size + selection.lineIds.size + selection.arcIds.size + selection.componentIds.size + selection.textIds.size;
 
-  if (onlyPoint) return <PointProperties pointId={[...selection.pointIds][0]} />;
-  if (onlyLine) return <LineProperties lineId={[...selection.lineIds][0]} />;
-  if (onlyArc) return <ArcProperties arcId={[...selection.arcIds][0]} />;
-  if (onlyComponent) return <ComponentProperties componentId={[...selection.componentIds][0]} />;
+  if (total === 1) {
+    if (selection.pointIds.size === 1) return <PointProperties pointId={[...selection.pointIds][0]} />;
+    if (selection.lineIds.size === 1) return <LineProperties lineId={[...selection.lineIds][0]} />;
+    if (selection.arcIds.size === 1) return <ArcProperties arcId={[...selection.arcIds][0]} />;
+    if (selection.componentIds.size === 1) return <ComponentProperties componentId={[...selection.componentIds][0]} />;
+    if (selection.textIds.size === 1) return <TextProperties textId={[...selection.textIds][0]} />;
+  }
   return (
     <div className="properties-panel properties-panel--empty">
-      <p>Select a single point, line, arc, or component to edit its properties.</p>
+      <p>Select a single point, line, arc, component, or text note to edit its properties.</p>
     </div>
   );
 }
@@ -282,17 +284,20 @@ function ArcProperties({ arcId }: { arcId: Id }) {
 function ComponentProperties({ componentId }: { componentId: Id }) {
   const version = useSketchStore((s) => s.version);
   const setComponentTag = useSketchStore((s) => s.setComponentTag);
+  const setComponentName = useSketchStore((s) => s.setComponentName);
   const setComponentRotationDeg = useSketchStore((s) => s.setComponentRotationDeg);
 
   const graph = useSketchStore.getState().graph;
   const instance = graph.components.get(componentId);
 
   const [tagText, setTagText] = useState('');
+  const [nameText, setNameText] = useState('');
   const [rotationText, setRotationText] = useState('');
 
   useEffect(() => {
     if (instance) {
       setTagText(instance.tag);
+      setNameText(instance.name ?? '');
       setRotationText(normalizeDegrees(instance.rotation * RAD_TO_DEG).toFixed(1));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -303,6 +308,13 @@ function ComponentProperties({ componentId }: { componentId: Id }) {
   const commitTag = () => {
     if (tagText.trim()) setComponentTag(componentId, tagText.trim());
     else setTagText(instance.tag);
+  };
+
+  // Unlike the tag, an empty name is a valid value (it clears the name), so there's
+  // nothing to revert to — but skip unchanged text so merely tabbing through the field
+  // doesn't push an undo entry.
+  const commitName = () => {
+    if (nameText.trim() !== (instance.name ?? '')) setComponentName(componentId, nameText);
   };
 
   const commitRotation = () => {
@@ -326,6 +338,16 @@ function ComponentProperties({ componentId }: { componentId: Id }) {
       <label className="field">
         <span>Tag</span>
         <input value={tagText} onChange={(e) => setTagText(e.target.value)} onBlur={commitTag} onKeyDown={onEnter(commitTag)} />
+      </label>
+      <label className="field">
+        <span>Name</span>
+        <input
+          value={nameText}
+          placeholder="e.g. Reactor feed pump"
+          onChange={(e) => setNameText(e.target.value)}
+          onBlur={commitName}
+          onKeyDown={onEnter(commitName)}
+        />
       </label>
       <label className="field">
         <span>Rotation (°)</span>
@@ -367,6 +389,72 @@ function ComponentProperties({ componentId }: { componentId: Id }) {
           <button onClick={() => useSketchStore.getState().openRealHardwareModal(componentId)}>Real Hardware…</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** A free text annotation: its content and its size. Content is edited here as well as in
+ * the canvas's inline editor — the panel is where every other entity's fields live, and
+ * this is the only place a note's size can be changed. */
+function TextProperties({ textId }: { textId: Id }) {
+  const version = useSketchStore((s) => s.version);
+  const setTextContent = useSketchStore((s) => s.setTextContent);
+  const setTextFontSize = useSketchStore((s) => s.setTextFontSize);
+
+  const graph = useSketchStore.getState().graph;
+  const annotation = graph.texts.get(textId);
+
+  const [contentText, setContentText] = useState('');
+  const [sizeText, setSizeText] = useState('');
+
+  useEffect(() => {
+    if (annotation) {
+      setContentText(annotation.text);
+      setSizeText(String(annotation.fontSize));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [textId, version]);
+
+  if (!annotation) return null;
+
+  // Skip unchanged text so merely tabbing through the field doesn't push an undo entry.
+  // Emptying the field deletes the note (see SceneGraph.setTextContent), which is why
+  // there's no "revert to the old value" branch here.
+  const commitContent = () => {
+    if (contentText.trim() !== annotation.text) setTextContent(textId, contentText);
+  };
+
+  const commitSize = () => {
+    const value = parseFloat(sizeText);
+    if (Number.isFinite(value) && value > 0) setTextFontSize(textId, value);
+    else setSizeText(String(annotation.fontSize));
+  };
+
+  return (
+    <div className="properties-panel">
+      <h3>Text</h3>
+      <label className="field">
+        <span>Content</span>
+        <input
+          value={contentText}
+          placeholder="Clear to delete the note"
+          onChange={(e) => setContentText(e.target.value)}
+          onBlur={commitContent}
+          onKeyDown={onEnter(commitContent)}
+        />
+      </label>
+      <label className="field">
+        <span>Size (drawing units)</span>
+        <input
+          type="number"
+          step="any"
+          min="0.1"
+          value={sizeText}
+          onChange={(e) => setSizeText(e.target.value)}
+          onBlur={commitSize}
+          onKeyDown={onEnter(commitSize)}
+        />
+      </label>
     </div>
   );
 }

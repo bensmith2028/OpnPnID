@@ -52,6 +52,26 @@ export interface Arc {
   tangentEnd?: TangentRef;
 }
 
+/**
+ * A free text annotation placed directly on the drawing (a note, a title, a callout).
+ * Deliberately NOT built on graph Points: nothing ever connects to a note, and every id in
+ * `SceneGraph.points` being a real vertex is what lets the snapping/degree/merge machinery
+ * stay simple — so annotations get their own top-level list instead.
+ *
+ * `x`/`y` is the text's *centre*, not a corner: the note then stays put as its content
+ * grows or shrinks, and the inline editor can sit exactly over what it's replacing.
+ * `fontSize` is a height in world units (like every other coordinate here), so a note
+ * zooms with the geometry around it rather than staying a fixed number of screen pixels
+ * the way a component's tag label does.
+ */
+export interface TextAnnotation {
+  id: Id;
+  x: number;
+  y: number;
+  text: string;
+  fontSize: number;
+}
+
 /** A component's connection port, as placed: `localId` identifies the port within the
  * category's symbol geometry (see `SymbolGeometry.ports`), `pointId` is the real graph
  * Point a pipe can snap onto. */
@@ -64,6 +84,18 @@ export interface SymbolArc {
   a: string;
   b: string;
   bulge: number;
+}
+
+/** A text label drawn as part of a symbol's body ("NC", "PSV", a size marking), in the
+ * same unscaled local coordinates as `SymbolGeometry.points` — `x`/`y` is the label's
+ * centre and `size` its height, both scaled by the document's `componentScale` when a
+ * placed instance is drawn. Ids are deliberately absent, like `SymbolArc`'s: a label is
+ * nothing but its own content, so nothing else in the geometry ever refers to one. */
+export interface SymbolText {
+  x: number;
+  y: number;
+  text: string;
+  size: number;
 }
 
 /** An uploaded raster image used as a symbol's body, drawn centered at the symbol's
@@ -91,6 +123,8 @@ export interface SymbolImage {
  * `getSymbol`/`upsertSymbol`), which takes priority when present (see
  * `buildComponentSnapshot`) — `image` is optional on all three kinds so lines/arcs and
  * an image can in principle coexist, though the symbol editor only ever populates one.
+ * `texts` is optional for the same reason: most symbols carry no labels, and one authored
+ * before labels existed is simply a symbol without them.
  */
 export interface SymbolGeometry {
   points: Record<string, Vec2>;
@@ -98,6 +132,7 @@ export interface SymbolGeometry {
   arcs: SymbolArc[];
   ports: string[];
   image?: SymbolImage;
+  texts?: SymbolText[];
 }
 
 /** A snapshot of the library data a placed instance referenced, embedded so the project
@@ -130,6 +165,12 @@ export interface ComponentInstance {
   categoryId: string;
   realPartId: string | null;
   tag: string;
+  /** Free-text descriptive name for this instance ("Reactor feed pump"), separate from
+   * the ISA-lite `tag` that identifies it — a service description, not an id, so
+   * duplicates are fine and it's never auto-generated. Absent until the user types one
+   * (so older project files load unchanged, and the canvas stays uncluttered by default)
+   * — see SceneGraph.setComponentName. */
+  name?: string;
   position: Vec2;
   rotation: number;
   connections: ComponentConnection[];
@@ -141,6 +182,7 @@ export interface Selection {
   lineIds: Set<Id>;
   arcIds: Set<Id>;
   componentIds: Set<Id>;
+  textIds: Set<Id>;
 }
 
 export interface SceneGraphJSON {
@@ -148,9 +190,18 @@ export interface SceneGraphJSON {
   lines: Line[];
   arcs: Arc[];
   components: ComponentInstance[];
+  texts: TextAnnotation[];
 }
 
+/** A saved/exported project document. See `io/projectFormat.ts` for the format itself —
+ * what each field means, the schema version history, and how a file is validated on the
+ * way back in. */
 export interface ProjectFile {
-  version: 1;
+  /** Marker identifying the file as this app's. Absent in version 1 files. */
+  app?: string;
+  /** Schema version of the document (not the app version). */
+  version: number;
+  /** Component-size multiplier the drawing was authored at. Absent in version 1 files. */
+  componentScale?: number;
   scene: SceneGraphJSON;
 }
