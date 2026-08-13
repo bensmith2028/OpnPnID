@@ -847,3 +847,56 @@ body {
   opacity: 0.5;
   cursor: default;
 }
+
+/* ---------------------------------------------------------------------------------
+   Unsaved-changes prompt — shown when a close/quit is held back (see platform/appClose.ts)
+   --------------------------------------------------------------------------------- */
+
+/* Above the other modals: this one is asking about the whole app, so it has to be
+   answerable even while the symbol editor or real-hardware modal is open. */
+.unsaved-backdrop {
+  z-index: 200;
+}
+
+.unsaved-dialog {
+  width: 380px;
+}
+
+.unsaved-dialog h3 {
+  margin: 0 0 10px;
+  font-size: 15px;
+  color: var(--text);
+}
+
+.unsaved-dialog p {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.unsaved-dialog .unsaved-warning {
+  color: var(--text);
+}
+
+.unsaved-dialog .unsaved-error {
+  color: var(--error);
+}
+
+.unsaved-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.unsaved-actions button.active {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: var(--accent);
+}
+
+.unsaved-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

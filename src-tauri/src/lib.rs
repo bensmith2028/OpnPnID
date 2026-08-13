@@ -4,7 +4,40 @@
 // managed via tauri-plugin-sql migrations below; the frontend talks to it directly
 // through the plugin's JS API (src/library/db.ts) rather than hand-rolled Rust commands,
 // consistent with how fs/dialog are already used as plugins rather than custom commands.
+use std::sync::atomic::{AtomicBool, Ordering};
+use tauri::{Emitter, Manager};
 use tauri_plugin_sql::{Migration, MigrationKind};
+
+/// Whether the drawing on screen has edits that aren't on disk yet. Mirrored here from the
+/// frontend's own `dirty` flag (see the store) because the *decision* to hold the app open
+/// has to happen in Rust: by the time a close/quit reaches the frontend it's already too
+/// late to stop it, and asking the webview and waiting for an answer isn't possible from
+/// inside the synchronous event handlers below.
+#[derive(Default)]
+struct UnsavedChanges(AtomicBool);
+
+/// Called by the frontend whenever its dirty flag changes — see src/platform/appClose.ts.
+#[tauri::command]
+fn set_unsaved_changes(state: tauri::State<'_, UnsavedChanges>, has_unsaved: bool) {
+    state.0.store(has_unsaved, Ordering::SeqCst);
+}
+
+/// Quits for real, from the frontend's "Save"/"Don't Save" answer to the prompt below.
+/// Clearing the flag first is what stops the exit it triggers from being intercepted all
+/// over again by the same handlers.
+#[tauri::command]
+fn quit_app(app: tauri::AppHandle) {
+    app.state::<UnsavedChanges>().0.store(false, Ordering::SeqCst);
+    app.exit(0);
+}
+
+/// Emitted to the frontend in place of a close/quit that was held back — the frontend puts
+/// up the unsaved-changes prompt and answers with `quit_app` (or nothing, to stay open).
+const CLOSE_REQUESTED_EVENT: &str = "app-close-requested";
+
+fn has_unsaved(app: &tauri::AppHandle) -> bool {
+    app.state::<UnsavedChanges>().0.load(Ordering::SeqCst)
+}
 
 fn library_migrations() -> Vec<Migration> {
     vec![
@@ -245,6 +278,20 @@ fn library_migrations() -> Vec<Migration> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(UnsavedChanges::default())
+        .invoke_handler(tauri::generate_handler![set_unsaved_changes, quit_app])
+        // Closing the window is only one of the ways out of the app — the Dock's Quit item
+        // and anything else that terminates the process arrive as ExitRequested further
+        // down instead, without this ever firing. Both are guarded, or an unsaved drawing
+        // would survive one route out and not the other.
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if has_unsaved(window.app_handle()) {
+                    api.prevent_close();
+                    let _ = window.app_handle().emit(CLOSE_REQUESTED_EVENT, ());
+                }
+            }
+        })
         .plugin(
             tauri_plugin_sql::Builder::default()
                 .add_migrations("sqlite:library.db", library_migrations())
@@ -313,6 +360,17 @@ pub fn run() {
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        // `build` + `run(closure)` rather than plain `run(context)`: RunEvent::ExitRequested
+        // is only reachable from the run loop's callback, and it's the one that catches a
+        // Dock/menu Quit — a window's CloseRequested never fires for those.
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                if has_unsaved(app_handle) {
+                    api.prevent_exit();
+                    let _ = app_handle.emit(CLOSE_REQUESTED_EVENT, ());
+                }
+            }
+        });
 }

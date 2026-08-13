@@ -2,8 +2,9 @@ import { useState } from 'react';
 import { MIN_SNAP_THRESHOLD_PX, useSketchStore } from '../canvas/store/useSketchStore';
 import { exportBomDetailed, exportBomSummary } from '../io/bomExport';
 import { exportPdf } from '../io/pdfExport';
-import { newProject, openProject, saveProject, saveProjectAs } from '../io/projectIO';
+import { saveProject, saveProjectAs } from '../io/projectIO';
 import { describeError } from '../library/errors';
+import { guardUnsaved } from './unsavedGuard';
 
 /** Every file action (open/save/export) is a fire-and-forget async call from a plain
  * button — this runs it and surfaces a failure via a plain alert. There's no existing
@@ -71,10 +72,15 @@ export function Toolbar() {
         </button>
       </div>
       <div className="toolbar-group">
-        <button onClick={() => newProject()} title="Start an empty drawing">
+        {/* Both replace the current drawing outright, so they go through the same
+            unsaved-changes prompt a close/quit does — see ui/unsavedGuard.ts. */}
+        <button onClick={() => runFileAction(() => guardUnsaved('new'))} title="Start an empty drawing">
           New
         </button>
-        <button onClick={() => runFileAction(openProject)} title="Open a project file (.pnid.json) — including one exported from another machine">
+        <button
+          onClick={() => runFileAction(() => guardUnsaved('open'))}
+          title="Open a project file (.pnid.json) — including one exported from another machine"
+        >
           Open
         </button>
         <button onClick={() => runFileAction(saveProject)} title="Save the whole drawing to its project file (.pnid.json)">

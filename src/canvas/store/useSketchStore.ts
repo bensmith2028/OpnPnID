@@ -6,6 +6,12 @@ import { SceneGraph } from '../sceneGraph';
 
 export type ToolName = 'select' | 'line' | 'arc' | 'point' | 'circle' | 'text' | 'component';
 
+/** Something the user asked for that throws away the current drawing if it goes ahead:
+ * closing/quitting the app, starting a new drawing, or opening another project. Each is
+ * put through the unsaved-changes prompt when there are edits to lose — see
+ * ui/unsavedGuard.ts, which is what maps one of these to what it actually does. */
+export type GuardedAction = 'quit' | 'new' | 'open';
+
 /** The app's UI theme (canvas + chrome). Print/PDF export (a future feature) should
  * always render with 'light' regardless of this — see renderer.ts's palette comment. */
 export type Theme = 'light' | 'dark';
@@ -179,6 +185,11 @@ interface SketchStoreState {
   pasteCount: number;
   filePath: string | null;
   dirty: boolean;
+  /** The discard-the-drawing action currently waiting on the unsaved-changes prompt, or
+   * null when nothing is being asked about — see ui/unsavedGuard.ts. Held in the store
+   * rather than in App's own state because the actions that raise it come from all over
+   * (the Toolbar's New/Open, and the shell's close/quit event). */
+  pendingGuardedAction: GuardedAction | null;
   past: HistoryEntry[];
   future: HistoryEntry[];
 
@@ -190,6 +201,7 @@ interface SketchStoreState {
   /** Opens the real-hardware assignment modal for a placed component instance. */
   openRealHardwareModal: (componentId: Id) => void;
   closeRealHardwareModal: () => void;
+  setPendingGuardedAction: (action: GuardedAction | null) => void;
   setCamera: (camera: CameraState) => void;
   setSelection: (selection: Selection) => void;
   setTheme: (theme: Theme) => void;
@@ -284,6 +296,7 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
   armedComponent: null,
   libraryPanelOpen: false,
   realHardwareModalComponentId: null,
+  pendingGuardedAction: null,
   clipboard: null,
   pasteCount: 0,
   filePath: null,
@@ -297,6 +310,7 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
   toggleLibraryPanel: () => set((s) => ({ libraryPanelOpen: !s.libraryPanelOpen })),
   openRealHardwareModal: (componentId) => set({ realHardwareModalComponentId: componentId }),
   closeRealHardwareModal: () => set({ realHardwareModalComponentId: null }),
+  setPendingGuardedAction: (action) => set({ pendingGuardedAction: action }),
   setCamera: (camera) => set({ camera }),
   // Selecting a point/line/arc/component (to edit its length/angle/etc. in the
   // Properties Panel) auto-closes the Library panel if it's open, since the two share
