@@ -5,7 +5,8 @@ import { buildDetailedRows, buildSummaryRows, detailedRowsToCsv, summaryRowsToCs
 const EMPTY_SYMBOL: SymbolGeometry = { points: {}, lines: [], arcs: [], ports: [] };
 
 /** Minimal valid instance, overridable per test — position/rotation/connections don't
- * matter to BOM building, only `tag` and `snapshot`. */
+ * matter to BOM building, only `tag`, `name` and `snapshot`. `name` is left off here so
+ * the default instance is an unnamed one (the state every component starts in). */
 function makeInstance(overrides: Partial<ComponentInstance> & { id: string }): ComponentInstance {
   return {
     categoryId: 'cat',
@@ -29,6 +30,7 @@ describe('buildDetailedRows', () => {
     const instance = makeInstance({
       id: 'c1',
       tag: 'V-101',
+      name: 'Reactor feed isolation',
       snapshot: {
         familyName: 'Valves',
         categoryName: '2-Way Ball Valve',
@@ -45,6 +47,7 @@ describe('buildDetailedRows', () => {
     expect(rows).toEqual([
       {
         tag: 'V-101',
+        name: 'Reactor feed isolation',
         family: 'Valves',
         category: '2-Way Ball Valve',
         manufacturer: 'Swagelok',
@@ -56,11 +59,12 @@ describe('buildDetailedRows', () => {
   });
 
   it('leaves manufacturer/model/specs/datasheet blank for an instance with no real part, but still includes the row', () => {
-    const instance = makeInstance({ id: 'c1', tag: 'V-102' });
+    const instance = makeInstance({ id: 'c1', tag: 'V-102', name: 'Vent' });
     const rows = buildDetailedRows([instance]);
     expect(rows).toEqual([
       {
         tag: 'V-102',
+        name: 'Vent',
         family: 'Valves',
         category: '2-Way Ball Valve',
         manufacturer: '',
@@ -69,6 +73,11 @@ describe('buildDetailedRows', () => {
         datasheetUrl: '',
       },
     ]);
+  });
+
+  it('leaves the name blank for an instance the user never named', () => {
+    const rows = buildDetailedRows([makeInstance({ id: 'c1', tag: 'V-103' })]);
+    expect(rows[0].name).toBe('');
   });
 
   it('preserves instance order and count (no grouping)', () => {
@@ -155,6 +164,7 @@ describe('detailedRowsToCsv / summaryRowsToCsv', () => {
     const instance = makeInstance({
       id: 'c1',
       tag: 'V-1',
+      name: 'Feed, main',
       snapshot: {
         familyName: 'Valves',
         categoryName: 'Ball Valve, 2-Way',
@@ -164,8 +174,8 @@ describe('detailedRowsToCsv / summaryRowsToCsv', () => {
     });
     const csv = detailedRowsToCsv(buildDetailedRows([instance]));
     const lines = csv.trim().split('\n');
-    expect(lines[0]).toBe('Tag,Family,Category,Manufacturer,Model Number,Specs,Datasheet URL');
-    expect(lines[1]).toBe('V-1,Valves,"Ball Valve, 2-Way","Acme, Inc.",X1,"note=says ""hi""",');
+    expect(lines[0]).toBe('Tag,Name,Family,Category,Manufacturer,Model Number,Specs,Datasheet URL');
+    expect(lines[1]).toBe('V-1,"Feed, main",Valves,"Ball Valve, 2-Way","Acme, Inc.",X1,"note=says ""hi""",');
   });
 
   it('renders a summary header row plus one line per group', () => {

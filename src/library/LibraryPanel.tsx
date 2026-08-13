@@ -82,7 +82,7 @@ export function LibraryPanel() {
           <button
             className={editMode ? 'active' : ''}
             onClick={() => setEditMode((m) => !m)}
-            title="Reveals Delete buttons throughout the library — off by default so browsing/placing can't accidentally delete anything"
+            title="Reveals the library-authoring actions — rename, attribute schema, symbol drawing, Delete — off by default so browsing/placing can't accidentally change anything"
           >
             {editMode ? 'Done Editing' : 'Edit'}
           </button>

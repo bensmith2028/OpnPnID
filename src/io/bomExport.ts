@@ -22,6 +22,7 @@ function formatSpecs(specs: RealPartSnapshot['specs']): string {
 
 export interface DetailedBomRow {
   tag: string;
+  name: string;
   family: string;
   category: string;
   manufacturer: string;
@@ -31,12 +32,15 @@ export interface DetailedBomRow {
 }
 
 /** One row per placed instance. An instance with no real part assigned still gets a row
- * (it still belongs in the BOM as "needs a part picked") with the part-derived columns blank. */
+ * (it still belongs in the BOM as "needs a part picked") with the part-derived columns blank.
+ * `name` is optional on the instance (never auto-generated — see ComponentInstance.name),
+ * so an unnamed component gets a blank cell, same as an unassigned part's columns. */
 export function buildDetailedRows(components: ComponentInstance[]): DetailedBomRow[] {
   return components.map((instance) => {
     const part = instance.snapshot.realPart;
     return {
       tag: instance.tag,
+      name: instance.name ?? '',
       family: instance.snapshot.familyName,
       category: instance.snapshot.categoryName,
       manufacturer: part?.manufacturer ?? '',
@@ -58,7 +62,9 @@ export interface SummaryBomRow {
 }
 
 /** Groups instances by (Category, Manufacturer, Model Number) into one row each with a
- * quantity count. Instances with no real part assigned group by Category alone
+ * quantity count. Deliberately carries no Name column: a name describes one instance's
+ * service ("Reactor feed pump"), so it has no meaning for a group of several — it stays
+ * a detailed-listing column only. Instances with no real part assigned group by Category alone
  * (Manufacturer/Model blank), separately from any assigned-part group in that category.
  * The join key is JSON-encoded (rather than plain-concatenated) so field values
  * containing arbitrary characters can never collide across a different combination. */
@@ -87,13 +93,13 @@ export function buildSummaryRows(components: ComponentInstance[]): SummaryBomRow
   return [...groups.values()];
 }
 
-const DETAILED_HEADERS = ['Tag', 'Family', 'Category', 'Manufacturer', 'Model Number', 'Specs', 'Datasheet URL'];
+const DETAILED_HEADERS = ['Tag', 'Name', 'Family', 'Category', 'Manufacturer', 'Model Number', 'Specs', 'Datasheet URL'];
 const SUMMARY_HEADERS = ['Family', 'Category', 'Manufacturer', 'Model Number', 'Quantity', 'Specs', 'Datasheet URL'];
 
 export function detailedRowsToCsv(rows: DetailedBomRow[]): string {
   const lines = [
     rowToCsvLine(DETAILED_HEADERS),
-    ...rows.map((r) => rowToCsvLine([r.tag, r.family, r.category, r.manufacturer, r.modelNumber, r.specs, r.datasheetUrl])),
+    ...rows.map((r) => rowToCsvLine([r.tag, r.name, r.family, r.category, r.manufacturer, r.modelNumber, r.specs, r.datasheetUrl])),
   ];
   return lines.join('\n') + '\n';
 }

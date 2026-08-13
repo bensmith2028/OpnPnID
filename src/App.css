@@ -157,6 +157,25 @@ body {
   cursor: crosshair;
 }
 
+/* The inline text editor (Text tool, and double-clicking an existing note): an input
+   sitting over the canvas exactly where its text will be drawn — hence the absolute
+   position, the centering translate (the renderer centers a note on its position too),
+   and the font-size set per-instance in JS from the note's world size and the zoom. */
+.canvas-text-editor {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  min-width: 120px;
+  padding: 1px 4px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  background: var(--bg-input);
+  color: var(--text);
+  font-family: sans-serif;
+  line-height: 1.2;
+  text-align: center;
+  outline: none;
+}
+
 .properties-panel {
   width: 240px;
   flex-shrink: 0;
@@ -495,6 +514,21 @@ body {
   white-space: nowrap;
 }
 
+/* Rename box on a category or family row — same footprint as the name button/label it
+   replaces in edit mode, but reading as an editable field rather than a link. (A family
+   row's tag-letter box adds .library-tag-letter-input on top, for its narrow footprint.) */
+.library-list-name--input {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: text;
+}
+
+.library-list-name--input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 .library-muted {
   color: var(--text-muted);
   font-size: 11px;
@@ -717,6 +751,34 @@ body {
   cursor: default;
 }
 
+/* The Text tool's size option. Laid out on one line (label beside field, unlike the image
+   tab's stacked width/height) so it takes no more vertical room than the tool buttons it
+   shares the row with. */
+.symbol-editor-text-size {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.symbol-editor-text-size input[type='number'] {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  padding: 4px 6px;
+  font-size: 11px;
+  width: 58px;
+}
+
+/* Anchors the inline label editor over the drawing canvas — see .canvas-text-editor. */
+.symbol-editor-canvas-wrap {
+  position: relative;
+}
+
 .symbol-editor-canvas {
   display: block;
   border: 1px solid var(--border);
@@ -755,6 +817,14 @@ body {
   justify-content: flex-end;
   gap: 6px;
   margin-top: 12px;
+}
+
+/* Import/Export push to the left edge, so the file actions read as a separate group from
+   the Cancel/Save pair the footer otherwise is. */
+.symbol-editor-footer-files {
+  display: flex;
+  gap: 6px;
+  margin-right: auto;
 }
 
 .symbol-editor-footer button {

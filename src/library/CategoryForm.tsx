@@ -5,11 +5,13 @@ import { describeError } from './errors';
 import { SymbolEditor } from './SymbolEditor';
 
 /** Category list + add form for one family. Each category is the fine-grained,
- * symbol-owning classification ("Automated 2-Way Valve") — expandable to show/manage
- * its attribute schema (the "make these attributes configurable too" surface). Real
- * hardware (real parts) is no longer managed here — it lives in the RealHardwareModal
- * opened from a placed component on the canvas. `editMode` gates the Delete button (see
- * LibraryPanel's Edit toggle) — Place stays always available. */
+ * symbol-owning classification ("Automated 2-Way Valve"), with its attribute schema (the
+ * "make these attributes configurable too" surface) hanging off the row. Real hardware
+ * (real parts) is no longer managed here — it lives in the RealHardwareModal opened from
+ * a placed component on the canvas. `editMode` (see LibraryPanel's Edit toggle) splits
+ * the row cleanly in two: browsing is purely for placing — clicking the name arms the
+ * component — while edit mode swaps in the library-authoring actions (rename, attribute
+ * schema, Edit Drawing, Delete). */
 export function CategorySection({ familyId, editMode }: { familyId: string; editMode: boolean }) {
   const [categories, setCategories] = useState<db.Category[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -31,6 +33,14 @@ export function CategorySection({ familyId, editMode }: { familyId: string; edit
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [familyId]);
 
+  // The attribute schema is an edit-mode-only surface, but `expandedId` is component
+  // state that the Edit toggle doesn't unmount — so a row expanded while editing would
+  // come back expanded the next time Edit is switched on, which isn't what "open the
+  // schema for this row" meant several toggles ago. Collapsing on every transition keeps
+  // entering edit mode a clean slate. (The row's render also gates on `editMode`; that's
+  // what stops the panel showing in browsing mode for the frame before this effect runs.)
+  useEffect(() => setExpandedId(null), [editMode]);
+
   const addCategory = async () => {
     if (!name.trim()) return;
     setError(null);
@@ -46,6 +56,18 @@ export function CategorySection({ familyId, editMode }: { familyId: string; edit
       setSubtype('');
       setActuation('');
       setPortCount('2');
+      await refresh();
+    } catch (e) {
+      setError(describeError(e));
+    }
+  };
+
+  const renameCategory = async (category: db.Category, name: string) => {
+    setError(null);
+    try {
+      // Spreading the row keeps subtype/actuation/portCount/symbolId intact — upsert
+      // rewrites the whole record, so anything left off would be nulled out.
+      await db.upsertCategory({ ...category, name });
       await refresh();
     } catch (e) {
       setError(describeError(e));
@@ -70,19 +92,35 @@ export function CategorySection({ familyId, editMode }: { familyId: string; edit
         {categories.map((c) => (
           <li key={c.id}>
             <div className="library-list-row">
-              <button className="library-list-name" onClick={() => setExpandedId(expandedId === c.id ? null : c.id)}>
-                {c.name}
-              </button>
-              {/* Browsing mode: just Place. Edit mode swaps that for the two editing
-                  actions (Edit Drawing, Delete) — keeping both sets mutually exclusive
-                  is what the Edit toggle is for, and it halves how much is on each row. */}
-              {!editMode && (
-                <button onClick={() => armComponent(c.id, null)} title="Place this category's symbol (no specific part assigned)">
-                  Place
+              {/* Browsing mode: the name *is* the Place action, so the whole (already
+                  full-width) label is the click target instead of a separate button
+                  crowding a narrow panel. The `title` carries what the button used to
+                  spell out, since the row no longer names the action itself. In edit mode
+                  the name becomes a text box so the category can be renamed in place. */}
+              {editMode ? (
+                <CategoryNameInput category={c} onRename={(name) => void renameCategory(c, name)} />
+              ) : (
+                <button
+                  className="library-list-name"
+                  onClick={() => armComponent(c.id, null)}
+                  title="Place this category's symbol on the canvas (no specific part assigned)"
+                >
+                  {c.name}
                 </button>
               )}
+              {/* Everything else on the row is edit-mode-only (Attributes, Edit Drawing,
+                  Delete). Keeping the two sets mutually exclusive is what the Edit toggle
+                  is for: browsing stays a one-click place-this list, and the schema editor
+                  can't be opened — or accidentally added to — mid-placement. */}
               {editMode && (
                 <>
+                  <button
+                    className="library-icon-button"
+                    onClick={() => setExpandedId(expandedId === c.id ? null : c.id)}
+                    title="Show/hide this category's configurable attributes"
+                  >
+                    {expandedId === c.id ? '▾' : '▸'}
+                  </button>
                   <button
                     className="library-icon-button"
                     onClick={() => setSymbolEditorFor(c)}
@@ -96,7 +134,7 @@ export function CategorySection({ familyId, editMode }: { familyId: string; edit
                 </>
               )}
             </div>
-            {expandedId === c.id && <AttributeDefinitionsEditor categoryId={c.id} editMode={editMode} />}
+            {editMode && expandedId === c.id && <AttributeDefinitionsEditor categoryId={c.id} />}
           </li>
         ))}
       </ul>
@@ -129,7 +167,47 @@ export function CategorySection({ familyId, editMode }: { familyId: string; edit
   );
 }
 
-function AttributeDefinitionsEditor({ categoryId, editMode }: { categoryId: string; editMode: boolean }) {
+/** Inline rename box for one category row (edit mode only). Its own component so each
+ * row owns its draft text, committing on blur/Enter and reverting on Escape — the same
+ * commit idiom as the Properties Panel's fields. */
+function CategoryNameInput({ category, onRename }: { category: db.Category; onRename: (name: string) => void }) {
+  const [text, setText] = useState(category.name);
+
+  // Re-sync when the list reloads (a rename elsewhere, or a folder sync) so the box
+  // never sits on a stale draft.
+  useEffect(() => setText(category.name), [category.name]);
+
+  const commit = () => {
+    const next = text.trim();
+    // A blank name would leave the row unlabelled and unplaceable, so treat it as a
+    // cancel rather than an error worth interrupting the user for.
+    if (!next || next === category.name) setText(category.name);
+    else onRename(next);
+  };
+
+  return (
+    <input
+      className="library-list-name library-list-name--input"
+      value={text}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') e.currentTarget.blur();
+        else if (e.key === 'Escape') {
+          setText(category.name);
+          e.currentTarget.blur();
+        }
+      }}
+      title="Rename this category — Enter to save, Escape to cancel"
+    />
+  );
+}
+
+/** One category's attribute schema — the definitions every real part in it fills in.
+ * Rendered only from an expanded row in edit mode, so unlike the other library sections
+ * it takes no `editMode` prop: reaching it at all already means editing, and gating the
+ * per-attribute Delete on a flag that can only be true here would just be noise. */
+function AttributeDefinitionsEditor({ categoryId }: { categoryId: string }) {
   const [attrs, setAttrs] = useState<db.AttributeDefinition[]>([]);
   const [key, setKey] = useState('');
   const [label, setLabel] = useState('');
@@ -187,11 +265,9 @@ function AttributeDefinitionsEditor({ categoryId, editMode }: { categoryId: stri
               <span>
                 {a.label} <span className="library-muted">({a.key}, {a.type}{a.unit ? `, ${a.unit}` : ''})</span>
               </span>
-              {editMode && (
-                <button className="library-icon-button library-icon-button--danger" onClick={() => void removeAttr(a.id)} title="Remove attribute">
-                  🗑
-                </button>
-              )}
+              <button className="library-icon-button library-icon-button--danger" onClick={() => void removeAttr(a.id)} title="Remove attribute">
+                🗑
+              </button>
             </li>
           ))}
         </ul>
