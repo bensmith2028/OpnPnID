@@ -1,5 +1,12 @@
 import { symbolBoundingRadius } from '../library/builtinSymbols';
 import type { ComponentInstance, Selection, TextAnnotation, Vec2 } from '../types/geometry';
+import {
+  COMPONENT_LABEL_KINDS,
+  componentLabelAnchor,
+  componentLabelHalfExtent,
+  componentLabelText,
+  LABEL_FONT_PX,
+} from './componentLabels';
 import { add, arcGeometry, type ArcGeometry, bulgeFromSagittaCursor, rotate, textHalfExtent } from './geometry';
 import type { SceneGraph } from './sceneGraph';
 import type { CameraState, Theme } from './store/useSketchStore';
@@ -460,9 +467,13 @@ function drawTextAnnotation(
   }
 }
 
-/** Draws an instance's tag above its symbol and its descriptive name (when it has one —
- * see ComponentInstance.name) below, straddling the body so the two never overlap each
- * other regardless of symbol size. */
+/** Draws an instance's tag and its descriptive name (when it has one — see
+ * ComponentInstance.name) at wherever componentLabelAnchor puts them: straddling the body
+ * by default, or wherever the user dragged them to (see ComponentInstance.tagOffset). A
+ * label dragged clear of its symbol gets a leader line back to it, since "which component
+ * is this the tag of" stops being obvious the moment the label stops touching one; and a
+ * selected component's labels get their boxes outlined, which is the only hint that a
+ * label is a thing you can grab at all. */
 function drawComponentLabels(
   ctx: CanvasRenderingContext2D,
   instance: ComponentInstance,
@@ -473,16 +484,69 @@ function drawComponentLabels(
   componentScale: number,
 ) {
   const center = worldToScreen(instance.position, camera, size);
-  const offset = symbolBoundingRadius(instance.snapshot.symbol) * componentScale * camera.zoom + 6;
-  ctx.fillStyle = selected ? colors.lineSelected : colors.componentTag;
-  ctx.font = '11px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'bottom';
-  ctx.fillText(instance.tag, center.x, center.y - offset);
-  if (instance.name) {
-    ctx.textBaseline = 'top';
-    ctx.fillText(instance.name, center.x, center.y + offset);
+  const bodyRadiusPx = symbolBoundingRadius(instance.snapshot.symbol) * componentScale * camera.zoom;
+  const color = selected ? colors.lineSelected : colors.componentTag;
+
+  for (const kind of COMPONENT_LABEL_KINDS) {
+    const text = componentLabelText(instance, kind);
+    if (!text) continue;
+    const s = worldToScreen(componentLabelAnchor(instance, kind, componentScale, camera.zoom), camera, size);
+    const half = componentLabelHalfExtent(text, camera.zoom);
+    const halfW = half.x * camera.zoom;
+    const halfH = half.y * camera.zoom;
+
+    drawLabelLeader(ctx, center, bodyRadiusPx, s, halfW, halfH, color);
+
+    ctx.fillStyle = color;
+    ctx.font = `${LABEL_FONT_PX}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, s.x, s.y);
+
+    if (selected) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
+      ctx.strokeRect(s.x - halfW, s.y - halfH, halfW * 2, halfH * 2);
+      ctx.setLineDash([]);
+    }
   }
+}
+
+/** Dashed line from the symbol's bounding circle to the near edge of a label that has been
+ * dragged clear of it. Draws nothing while the label still sits against the body (the
+ * default placement, and any small nudge from it), where a leader would be pure clutter. */
+function drawLabelLeader(
+  ctx: CanvasRenderingContext2D,
+  center: Vec2,
+  bodyRadiusPx: number,
+  label: Vec2,
+  halfW: number,
+  halfH: number,
+  color: string,
+) {
+  const dx = label.x - center.x;
+  const dy = label.y - center.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist < 1e-6) return;
+  // Distance from the label's centre to its own edge along the line back to the body —
+  // so the leader stops at the box rather than running under the glyphs.
+  const edge = Math.min(Math.abs(halfW / (dx / dist)) || Infinity, Math.abs(halfH / (dy / dist)) || Infinity);
+  const from = bodyRadiusPx + 4;
+  const to = dist - edge - 3;
+  if (to - from < 6) return;
+  const ux = dx / dist;
+  const uy = dy / dist;
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.globalAlpha = 0.6;
+  ctx.lineWidth = 1;
+  ctx.setLineDash([3, 3]);
+  ctx.beginPath();
+  ctx.moveTo(center.x + ux * from, center.y + uy * from);
+  ctx.lineTo(center.x + ux * to, center.y + uy * to);
+  ctx.stroke();
+  ctx.restore();
 }
 
 function drawAxisLockGlyph(ctx: CanvasRenderingContext2D, a: Vec2, b: Vec2, axis: 'H' | 'V', colors: Palette) {

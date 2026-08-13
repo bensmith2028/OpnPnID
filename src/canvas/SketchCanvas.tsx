@@ -10,7 +10,14 @@ import { drawArcCancel, drawArcOnPointerDown, drawArcOnPointerMove } from './too
 import { drawCircleCancel, drawCircleOnPointerDown, drawCircleOnPointerMove } from './tools/drawCircleTool';
 import { componentOnPointerDown, componentOnPointerMove } from './tools/componentTool';
 import { pointOnPointerDown, pointOnPointerMove } from './tools/pointTool';
-import { componentAtWorld, selectOnPointerDown, selectOnPointerMove, selectOnPointerUp, textAtWorld } from './tools/selectTool';
+import {
+  componentAtWorld,
+  componentLabelAtWorld,
+  selectOnPointerDown,
+  selectOnPointerMove,
+  selectOnPointerUp,
+  textAtWorld,
+} from './tools/selectTool';
 import { textCancel, textOnPointerMove, textPlacementPoint } from './tools/textTool';
 import { createInteractionState } from './tools/types';
 import type { CanvasSize } from './tools/types';
@@ -274,6 +281,15 @@ export function SketchCanvas() {
       const annotation = textAtWorld(world);
       if (annotation) {
         openTextEditor(world);
+        return;
+      }
+      // Double-clicking a dragged label puts it back where it started — the undo of a
+      // label drag you no longer want, available right where the label is (the same
+      // "reset" the Properties Panel offers). Tested before the component below, matching
+      // the pointer-down order that lets a label be grabbed over its own body.
+      const label = componentLabelAtWorld(world);
+      if (label) {
+        useSketchStore.getState().resetComponentLabelOffsets(label.instance.id, label.kind);
         return;
       }
       const instance = componentAtWorld(world);

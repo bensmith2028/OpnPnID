@@ -1,6 +1,7 @@
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { useEffect, useState } from 'react';
 import type { AxisLock, Id, Line } from '../types/geometry';
+import { hasCustomLabelOffset } from '../canvas/componentLabels';
 import { useSketchStore } from '../canvas/store/useSketchStore';
 import type { SceneGraph } from '../canvas/sceneGraph';
 
@@ -286,6 +287,7 @@ function ComponentProperties({ componentId }: { componentId: Id }) {
   const setComponentTag = useSketchStore((s) => s.setComponentTag);
   const setComponentName = useSketchStore((s) => s.setComponentName);
   const setComponentRotationDeg = useSketchStore((s) => s.setComponentRotationDeg);
+  const resetComponentLabelOffsets = useSketchStore((s) => s.resetComponentLabelOffsets);
 
   const graph = useSketchStore.getState().graph;
   const instance = graph.components.get(componentId);
@@ -360,6 +362,17 @@ function ComponentProperties({ componentId }: { componentId: Id }) {
           onKeyDown={onEnter(commitRotation)}
         />
       </label>
+
+      {/* Only offered once a label has actually been dragged — there's nothing to reset
+          otherwise, and a permanently-disabled button would just be noise. */}
+      {hasCustomLabelOffset(instance) && (
+        <div className="field">
+          <span>Labels</span>
+          <div className="fillet-row">
+            <button onClick={() => resetComponentLabelOffsets(componentId)}>Reset Label Positions</button>
+          </div>
+        </div>
+      )}
 
       <div className="field">
         <span>Real part</span>

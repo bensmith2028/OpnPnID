@@ -1,5 +1,13 @@
 import { symbolLocalBounds } from '../../library/builtinSymbols';
 import type { Arc, ComponentInstance, Id, Line, Selection, TextAnnotation, Vec2 } from '../../types/geometry';
+import {
+  COMPONENT_LABEL_KINDS,
+  componentLabelAnchor,
+  componentLabelHalfExtent,
+  type ComponentLabelKind,
+  componentLabelOffset,
+  componentLabelText,
+} from '../componentLabels';
 import { distance, projectPointOnArc, projectPointOnSegment, rotate, subtract, textHalfExtent } from '../geometry';
 import type { SceneGraph } from '../sceneGraph';
 import { computeSnap } from '../snapping';
@@ -139,6 +147,28 @@ function hitTestText(world: Vec2, threshold: number): TextAnnotation | null {
   return best?.annotation ?? null;
 }
 
+/** Hit-tests the tag/name labels of every placed component, against the same boxes the
+ * renderer draws them in (see componentLabels). Returns the closest hit — labels are
+ * small and fixed-size on screen, so overlaps between two of them are near enough to a
+ * tie that "whichever centre is nearer the cursor" is as good a rule as any. */
+function hitTestComponentLabel(world: Vec2, threshold: number): { instance: ComponentInstance; kind: ComponentLabelKind } | null {
+  const { graph, componentScale, camera } = useSketchStore.getState();
+  let best: { instance: ComponentInstance; kind: ComponentLabelKind; distance: number } | null = null;
+  for (const instance of graph.components.values()) {
+    for (const kind of COMPONENT_LABEL_KINDS) {
+      const text = componentLabelText(instance, kind);
+      if (!text) continue;
+      const anchor = componentLabelAnchor(instance, kind, componentScale, camera.zoom);
+      const half = componentLabelHalfExtent(text, camera.zoom);
+      if (Math.abs(world.x - anchor.x) > half.x + threshold) continue;
+      if (Math.abs(world.y - anchor.y) > half.y + threshold) continue;
+      const d = distance(world, anchor);
+      if (!best || d < best.distance) best = { instance, kind, distance: d };
+    }
+  }
+  return best ? { instance: best.instance, kind: best.kind } : null;
+}
+
 /** An edge's body can be dragged as a rigid unit only when neither endpoint is shared with
  * another line/arc (or owned by a component) — dragging a shared endpoint should be done
  * via the endpoint (or component) itself, so this avoids silently tearing a joint (MVP
@@ -215,6 +245,37 @@ export function selectOnPointerDown(world: Vec2, additive: boolean, ctx: ToolCtx
       textId: annotation.id,
       grabWorld: world,
       origin: { x: annotation.x, y: annotation.y },
+      before: graph.toJSON(),
+    };
+    ctx.requestRedraw();
+    return;
+  }
+
+  // A label is grabbed ahead of the bodies/edges it may be sitting over — it's drawn on
+  // top of them, and it's the only thing here whose whole purpose is to be moved out of
+  // the way of the geometry it overlaps. Notes still win over it, matching the draw order.
+  const labelHit = ownerComponentId ? null : hitTestComponentLabel(world, threshold);
+  if (labelHit) {
+    const { instance, kind } = labelHit;
+    // Selects the owning component rather than the label itself: a label isn't an entity
+    // (it has no id, and nothing but the component can be done with it), and selecting the
+    // component is what puts its tag/name in the Properties Panel. Never toggles the
+    // component off, unlike a click on the body — you can't drag what you just deselected.
+    const componentIds = new Set(additive ? selection.componentIds : []);
+    componentIds.add(instance.id);
+    setSelection({
+      componentIds,
+      pointIds: additive ? selection.pointIds : new Set(),
+      lineIds: additive ? selection.lineIds : new Set(),
+      arcIds: additive ? selection.arcIds : new Set(),
+      textIds: additive ? selection.textIds : new Set(),
+    });
+    interaction.drag = {
+      kind: 'componentLabel',
+      componentId: instance.id,
+      label: kind,
+      grabWorld: world,
+      originOffset: componentLabelOffset(instance, kind, useSketchStore.getState().componentScale, useSketchStore.getState().camera.zoom),
       before: graph.toJSON(),
     };
     ctx.requestRedraw();
@@ -390,6 +451,16 @@ export function selectOnPointerMove(world: Vec2, ctx: ToolCtx) {
     graph.moveText(drag.textId, snap.point.x, snap.point.y);
     bumpVersion();
     ctx.requestRedraw();
+  } else if (drag.kind === 'componentLabel') {
+    // Free positioning, no snap search at all: a label is not geometry, so there is nothing
+    // it could usefully land *on* — grid-quantizing it would only take away the sub-cell
+    // nudge that clears a label from the pipe running under it.
+    graph.setComponentLabelOffset(drag.componentId, drag.label, {
+      x: drag.originOffset.x + (world.x - drag.grabWorld.x),
+      y: drag.originOffset.y + (world.y - drag.grabWorld.y),
+    });
+    bumpVersion();
+    ctx.requestRedraw();
   } else if (drag.kind === 'component') {
     const dx = world.x - drag.grabWorld.x;
     const dy = world.y - drag.grabWorld.y;
@@ -440,7 +511,14 @@ export function selectOnPointerUp(ctx: ToolCtx) {
     if (drag.mergeCandidate) graph.mergePoints(drag.pointId, drag.mergeCandidate);
     const after = graph.toJSON();
     if (JSON.stringify(after) !== JSON.stringify(drag.before)) commit(drag.before);
-  } else if (drag.kind === 'line' || drag.kind === 'arc' || drag.kind === 'text' || drag.kind === 'component' || drag.kind === 'group') {
+  } else if (
+    drag.kind === 'line' ||
+    drag.kind === 'arc' ||
+    drag.kind === 'text' ||
+    drag.kind === 'component' ||
+    drag.kind === 'componentLabel' ||
+    drag.kind === 'group'
+  ) {
     const after = graph.toJSON();
     if (JSON.stringify(after) !== JSON.stringify(drag.before)) commit(drag.before);
   } else if (drag.kind === 'marquee') {
@@ -504,11 +582,19 @@ export function textAtWorld(world: Vec2): TextAnnotation | null {
   return hitTestText(world, worldThreshold());
 }
 
-export function selectHitTestForCursor(world: Vec2): 'point' | 'line' | 'arc' | 'text' | 'component' | null {
+/** Finds the component label (if any) under a world point, using the same box hit test as
+ * the select tool's own pointer-down handling — exposed for SketchCanvas's
+ * double-click-to-reset-a-dragged-label handler. */
+export function componentLabelAtWorld(world: Vec2): { instance: ComponentInstance; kind: ComponentLabelKind } | null {
+  return hitTestComponentLabel(world, worldThreshold());
+}
+
+export function selectHitTestForCursor(world: Vec2): 'point' | 'line' | 'arc' | 'text' | 'label' | 'component' | null {
   const threshold = worldThreshold();
   const point = hitTestPoint(world, threshold);
   if (point) return 'point';
   if (hitTestText(world, threshold)) return 'text';
+  if (hitTestComponentLabel(world, threshold)) return 'label';
   if (hitTestComponent(world, threshold)) return 'component';
   const hit = hitTestEdge(world, threshold);
   return hit?.kind ?? null;

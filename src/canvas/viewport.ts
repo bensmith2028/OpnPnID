@@ -1,5 +1,6 @@
 import { symbolBoundingRadius } from '../library/builtinSymbols';
 import type { Vec2 } from '../types/geometry';
+import { COMPONENT_LABEL_KINDS, componentLabelCustomOffset } from './componentLabels';
 import { textHalfExtent } from './geometry';
 import type { SceneGraph } from './sceneGraph';
 import type { CameraState } from './store/useSketchStore';
@@ -92,6 +93,14 @@ export function fitCameraToContent(graph: SceneGraph, size: CanvasSize, componen
   for (const instance of graph.components.values()) {
     const radius = symbolBoundingRadius(instance.snapshot.symbol) * componentScale;
     expand(instance.position.x, instance.position.y, radius);
+    // A label dragged clear of its symbol can sit outside that radius, and the export
+    // frames the whole drawing — so it would otherwise be the one thing cropped off the
+    // page. Only *custom* placements need this: the automatic one is derived from the
+    // radius already covered above (and from a zoom this function is still computing).
+    for (const kind of COMPONENT_LABEL_KINDS) {
+      const offset = componentLabelCustomOffset(instance, kind);
+      if (offset) expand(instance.position.x + offset.x, instance.position.y + offset.y, 0);
+    }
   }
   // A note is far wider than it is tall, so it needs the rectangular form — folding it into
   // the radius version would pad the drawing's height by the length of its longest note.

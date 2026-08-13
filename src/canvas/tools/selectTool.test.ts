@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { generatePlaceholderSymbol } from '../../library/builtinSymbols';
-import type { ComponentSnapshot } from '../../types/geometry';
+import type { ComponentSnapshot, Vec2 } from '../../types/geometry';
+import { componentLabelAnchor } from '../componentLabels';
 import { useSketchStore } from '../store/useSketchStore';
 import { createInteractionState } from './types';
 import { selectOnPointerDown, selectOnPointerMove, selectOnPointerUp } from './selectTool';
@@ -136,6 +137,139 @@ describe('text annotations under the Select tool', () => {
     selectOnPointerUp(ctx);
 
     expect(useSketchStore.getState().selection.textIds).toEqual(new Set([inside.id]));
+  });
+});
+
+describe('dragging a component label out of the way', () => {
+  /** Places a component and returns it plus the world point its tag is currently drawn at,
+   * so a test can click the label where it actually appears rather than hard-coding an
+   * offset that the automatic placement is free to change. */
+  function placedWithTagAt(position: Vec2, tag = 'V-101') {
+    useSketchStore.getState().placeComponent({ categoryId: 'cat1', realPartId: null, position, tag, snapshot: sampleSnapshot() });
+    const id = [...useSketchStore.getState().selection.componentIds][0];
+    const { graph, componentScale, camera } = useSketchStore.getState();
+    const instance = graph.components.get(id)!;
+    return { id, instance, tagAt: componentLabelAnchor(instance, 'tag', componentScale, camera.zoom) };
+  }
+
+  it('moves the label alone, leaving the component and its ports where they were', () => {
+    const { id, tagAt } = placedWithTagAt({ x: 0, y: 0 });
+    const portsBefore = useSketchStore
+      .getState()
+      .graph.components.get(id)!
+      .connections.map((c) => ({ ...useSketchStore.getState().graph.points.get(c.pointId)! }));
+
+    const ctx = newCtx();
+    selectOnPointerDown(tagAt, false, ctx);
+    expect(useSketchStore.getState().selection.componentIds).toEqual(new Set([id])); // the component, not "the label"
+
+    selectOnPointerMove({ x: tagAt.x + 33, y: tagAt.y - 7 }, ctx);
+    selectOnPointerUp(ctx);
+
+    const instance = useSketchStore.getState().graph.components.get(id)!;
+    expect(instance.position).toEqual({ x: 0, y: 0 });
+    expect(instance.connections.map((c) => ({ ...useSketchStore.getState().graph.points.get(c.pointId)! }))).toEqual(portsBefore);
+    // Free positioning, not grid-quantized: the raw delta is what a label needs to clear
+    // something by less than a grid cell.
+    const { componentScale, camera } = useSketchStore.getState();
+    expect(componentLabelAnchor(instance, 'tag', componentScale, camera.zoom)).toEqual({ x: tagAt.x + 33, y: tagAt.y - 7 });
+  });
+
+  it('is grabbed from where it is drawn, so the first move does not jump it onto the component', () => {
+    const { id, tagAt } = placedWithTagAt({ x: 0, y: 0 });
+
+    const ctx = newCtx();
+    selectOnPointerDown(tagAt, false, ctx);
+    selectOnPointerMove(tagAt, ctx); // pointer hasn't actually moved
+
+    const { graph, componentScale, camera } = useSketchStore.getState();
+    expect(componentLabelAnchor(graph.components.get(id)!, 'tag', componentScale, camera.zoom)).toEqual(tagAt);
+  });
+
+  it('takes the click ahead of the body when a dragged label ends up over one, and undoes in one step', () => {
+    const { id, tagAt } = placedWithTagAt({ x: 0, y: 0 });
+
+    const ctx = newCtx();
+    // Drag the tag right onto the component's own body — the case where the two hit tests
+    // genuinely compete.
+    selectOnPointerDown(tagAt, false, ctx);
+    selectOnPointerMove({ x: 0, y: 0 }, ctx);
+    selectOnPointerUp(ctx);
+    expect(useSketchStore.getState().graph.components.get(id)!.tagOffset).toEqual({ x: 0, y: 0 });
+
+    // Now clicking there grabs the label again, not the component underneath it.
+    selectOnPointerDown({ x: 0, y: 0 }, false, ctx);
+    selectOnPointerMove({ x: 12, y: 0 }, ctx);
+    selectOnPointerUp(ctx);
+    expect(useSketchStore.getState().graph.components.get(id)!.position).toEqual({ x: 0, y: 0 });
+    expect(useSketchStore.getState().graph.components.get(id)!.tagOffset).toEqual({ x: 12, y: 0 });
+
+    // One undo per drag, and the offsets in the history are snapshots — not aliases of the
+    // live instance the drag mutated.
+    useSketchStore.getState().undo();
+    expect(useSketchStore.getState().graph.components.get(id)!.tagOffset).toEqual({ x: 0, y: 0 });
+    useSketchStore.getState().undo();
+    expect(useSketchStore.getState().graph.components.get(id)!.tagOffset).toBeUndefined();
+  });
+
+  it('drags a name label independently of the tag', () => {
+    const { id, tagAt } = placedWithTagAt({ x: 0, y: 0 });
+    useSketchStore.getState().setComponentName(id, 'Feed pump');
+    const { graph, componentScale, camera } = useSketchStore.getState();
+    const nameAt = componentLabelAnchor(graph.components.get(id)!, 'name', componentScale, camera.zoom);
+
+    const ctx = newCtx();
+    selectOnPointerDown(nameAt, false, ctx);
+    selectOnPointerMove({ x: nameAt.x + 15, y: nameAt.y + 4 }, ctx);
+    selectOnPointerUp(ctx);
+
+    const instance = useSketchStore.getState().graph.components.get(id)!;
+    expect(instance.nameOffset).toBeTruthy();
+    expect(instance.tagOffset).toBeUndefined(); // the tag stayed on its automatic placement
+    expect(componentLabelAnchor(instance, 'tag', componentScale, camera.zoom)).toEqual(tagAt);
+  });
+
+  it('resets a dragged label back to the automatic placement', () => {
+    const { id, tagAt } = placedWithTagAt({ x: 0, y: 0 });
+
+    const ctx = newCtx();
+    selectOnPointerDown(tagAt, false, ctx);
+    selectOnPointerMove({ x: tagAt.x + 40, y: tagAt.y }, ctx);
+    selectOnPointerUp(ctx);
+
+    useSketchStore.getState().resetComponentLabelOffsets(id);
+    const { graph, componentScale, camera } = useSketchStore.getState();
+    expect(componentLabelAnchor(graph.components.get(id)!, 'tag', componentScale, camera.zoom)).toEqual(tagAt);
+  });
+
+  it('carries custom label placements through copy/paste', () => {
+    const { id, tagAt } = placedWithTagAt({ x: 0, y: 0 });
+
+    const ctx = newCtx();
+    selectOnPointerDown(tagAt, false, ctx);
+    selectOnPointerMove({ x: tagAt.x + 40, y: tagAt.y }, ctx);
+    selectOnPointerUp(ctx);
+    const offset = { ...useSketchStore.getState().graph.components.get(id)!.tagOffset! };
+
+    useSketchStore.getState().copySelection();
+    useSketchStore.getState().pasteSelection();
+
+    const pastedId = [...useSketchStore.getState().selection.componentIds][0];
+    expect(pastedId).not.toBe(id);
+    expect(useSketchStore.getState().graph.components.get(pastedId)!.tagOffset).toEqual(offset);
+  });
+
+  it('leaves labels alone when a click lands on the component body itself', () => {
+    const { id } = placedWithTagAt({ x: 0, y: 0 });
+
+    const ctx = newCtx();
+    selectOnPointerDown({ x: 0, y: 0 }, false, ctx);
+    selectOnPointerMove({ x: 23, y: 7 }, ctx);
+    selectOnPointerUp(ctx);
+
+    const instance = useSketchStore.getState().graph.components.get(id)!;
+    expect(instance.position).toEqual({ x: 20, y: 0 }); // the component moved, as before
+    expect(instance.tagOffset).toBeUndefined(); // and its labels came along on the automatic placement
   });
 });
 

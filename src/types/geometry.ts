@@ -173,6 +173,15 @@ export interface ComponentInstance {
   name?: string;
   position: Vec2;
   rotation: number;
+  /** Where the `tag` / `name` label sits relative to `position`, in world units, once the
+   * user has dragged it somewhere. Absent means "wherever the automatic placement puts
+   * it" (above/below the symbol body — see `canvas/componentLabels.ts`), which is what an
+   * untouched instance and every project file written before labels were movable both
+   * have. Stored in world units, not screen pixels, even though a label is drawn at a
+   * fixed pixel height: what the user is dodging when they drag one is a *drawing*
+   * (a pipe, a neighbouring symbol), so the fix has to hold at every zoom. */
+  tagOffset?: Vec2;
+  nameOffset?: Vec2;
   connections: ComponentConnection[];
   snapshot: ComponentSnapshot;
 }

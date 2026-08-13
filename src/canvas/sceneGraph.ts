@@ -1,4 +1,5 @@
 import type { Arc, AxisLock, ComponentInstance, ComponentSnapshot, Id, Line, Point, SceneGraphJSON, TextAnnotation, Vec2 } from '../types/geometry';
+import type { ComponentLabelKind } from './componentLabels';
 import {
   add,
   angleOf,
@@ -491,6 +492,10 @@ export class SceneGraph {
     name?: string;
     position: Vec2;
     rotation: number;
+    /** Optional custom label placements — like `name`, only ever set by a caller
+     * reinstating them (paste); a freshly placed component uses the automatic placement. */
+    tagOffset?: Vec2;
+    nameOffset?: Vec2;
     snapshot: ComponentSnapshot;
     id?: Id;
     /** Global component-size multiplier in effect at placement time — see moveComponent. */
@@ -512,6 +517,8 @@ export class SceneGraph {
       realPartId: params.realPartId,
       tag: params.tag,
       ...(params.name ? { name: params.name } : {}),
+      ...(params.tagOffset ? { tagOffset: params.tagOffset } : {}),
+      ...(params.nameOffset ? { nameOffset: params.nameOffset } : {}),
       position: params.position,
       rotation: params.rotation,
       connections,
@@ -569,6 +576,10 @@ export class SceneGraph {
     return {
       ...c,
       position: { ...c.position },
+      // Copied, not carried by reference, for the same reason `position` is: these end up
+      // in undo snapshots, which must not alias the live instance a label drag mutates.
+      ...(c.tagOffset ? { tagOffset: { ...c.tagOffset } } : {}),
+      ...(c.nameOffset ? { nameOffset: { ...c.nameOffset } } : {}),
       connections: c.connections.map((cc) => ({ ...cc })),
       snapshot: this.cloneSnapshot(c.snapshot),
     };
@@ -577,6 +588,18 @@ export class SceneGraph {
   setComponentTag(id: Id, tag: string) {
     const instance = this.components.get(id);
     if (instance) instance.tag = tag;
+  }
+
+  /** Moves one of a placed instance's labels to `offset` (world units, relative to the
+   * instance's position — see ComponentInstance.tagOffset), or back to its automatic
+   * placement when passed null. Purely cosmetic: nothing else reads these, so unlike
+   * moveComponent there's nothing to propagate. */
+  setComponentLabelOffset(id: Id, kind: ComponentLabelKind, offset: Vec2 | null) {
+    const instance = this.components.get(id);
+    if (!instance) return;
+    const key = kind === 'tag' ? 'tagOffset' : 'nameOffset';
+    if (offset) instance[key] = { x: offset.x, y: offset.y };
+    else delete instance[key];
   }
 
   /** Renames a placed instance. An empty/whitespace-only name drops the field entirely

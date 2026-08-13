@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { suggestTag } from '../../library/tagging';
 import type { AxisLock, ComponentSnapshot, Id, SceneGraphJSON, Selection, Vec2 } from '../../types/geometry';
+import { COMPONENT_LABEL_KINDS, componentLabelCustomOffset, type ComponentLabelKind } from '../componentLabels';
 import { SceneGraph } from '../sceneGraph';
 
 export type ToolName = 'select' | 'line' | 'arc' | 'point' | 'circle' | 'text' | 'component';
@@ -66,6 +67,10 @@ interface ClipboardComponent {
   name?: string;
   position: Vec2;
   rotation: number;
+  /** Custom label placements travel with the copy — they're relative to the instance's
+   * own position, so they land correctly wherever the paste ends up. */
+  tagOffset?: Vec2;
+  nameOffset?: Vec2;
 }
 
 /** The free-geometry (non-component) half of a copied selection — pipe segments, not
@@ -234,6 +239,10 @@ interface SketchStoreState {
    * clears the name — see SceneGraph.setComponentName. */
   setComponentName: (componentId: Id, name: string) => void;
   setComponentRotationDeg: (componentId: Id, degrees: number) => void;
+  /** Puts a placed component's dragged labels back on their automatic placement (both of
+   * them, or just one). No-op when nothing was moved, so it never lands an empty entry on
+   * the undo stack. */
+  resetComponentLabelOffsets: (componentId: Id, kind?: ComponentLabelKind) => void;
   /** Places a free text annotation centered on `position` and selects it, so its size is
    * immediately editable in the Properties Panel. Blank content is a no-op — an empty note
    * would be invisible and unclickable rather than an empty box waiting to be filled in. */
@@ -467,6 +476,17 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
     get().commit(before);
   },
 
+  resetComponentLabelOffsets: (componentId, kind) => {
+    const { graph } = get();
+    const instance = graph.components.get(componentId);
+    if (!instance) return;
+    const kinds = kind ? [kind] : COMPONENT_LABEL_KINDS;
+    if (!kinds.some((k) => componentLabelCustomOffset(instance, k))) return;
+    const before = graph.toJSON();
+    for (const k of kinds) graph.setComponentLabelOffset(componentId, k, null);
+    get().commit(before);
+  },
+
   setComponentRotationDeg: (componentId, degrees) => {
     const { graph, componentScale } = get();
     const instance = graph.components.get(componentId);
@@ -522,6 +542,8 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
         name: instance.name,
         position: { ...instance.position },
         rotation: instance.rotation,
+        ...(instance.tagOffset ? { tagOffset: { ...instance.tagOffset } } : {}),
+        ...(instance.nameOffset ? { nameOffset: { ...instance.nameOffset } } : {}),
       });
     }
 
@@ -621,6 +643,8 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
         name: item.name,
         position: { x: item.position.x + offset, y: item.position.y + offset },
         rotation: item.rotation,
+        tagOffset: item.tagOffset,
+        nameOffset: item.nameOffset,
         snapshot: cloneSnapshot(item.snapshot),
         scaleFactor: componentScale,
       });

@@ -1,4 +1,5 @@
 import type { Id, SceneGraphJSON, Vec2 } from '../../types/geometry';
+import type { ComponentLabelKind } from '../componentLabels';
 import type { SnapResult } from '../snapping';
 import type { CameraState } from '../store/useSketchStore';
 
@@ -73,6 +74,21 @@ export type DragState =
   /** A text annotation being dragged. Nothing propagates from it (a note has no
    * connectivity), so unlike a point drag this is a plain grid-quantized translate. */
   | { kind: 'text'; textId: Id; grabWorld: Vec2; origin: Vec2; before: SceneGraphJSON }
+  /** One of a component's labels (its tag or its name) being dragged off the automatic
+   * placement to clear whatever it was overlapping. `originOffset` is the label's
+   * effective offset from its component at pointer-down — the automatic one when the label
+   * hadn't been moved before, so the first drag continues from where the label already was
+   * instead of snapping the label onto the component's origin. Not grid-quantized, unlike
+   * every other drag here: the grid is the pipe geometry's, and a label nudged clear of a
+   * line by half a cell is exactly the adjustment this exists for. */
+  | {
+      kind: 'componentLabel';
+      componentId: Id;
+      label: ComponentLabelKind;
+      grabWorld: Vec2;
+      originOffset: Vec2;
+      before: SceneGraphJSON;
+    }
   | { kind: 'marquee'; originWorld: Vec2; currentWorld: Vec2; additive: boolean }
   /** Rigid-translate drag of an entire multi-item selection (e.g. a just-pasted batch of
    * components) — started when the pointer goes down on something already part of a
