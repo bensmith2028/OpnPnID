@@ -3,12 +3,15 @@ import { SceneGraph } from '../canvas/sceneGraph';
 import type { SymbolGeometry } from '../types/geometry';
 import {
   circleArcEndpoints,
+  clampTextSize,
+  DEFAULT_TEXT_SIZE,
   graphToGeometry,
   localToScreen,
+  MAX_TEXT_SIZE,
+  MIN_TEXT_SIZE,
   normalizeRect,
   pointInRect,
   populateGraph,
-  quantizeDelta,
   screenToLocal,
   selectInsideRect,
   selectionPointIds,
@@ -37,6 +40,19 @@ describe('populateGraph / graphToGeometry', () => {
     expect(result.ports).toEqual(['b', 'a']);
   });
 
+  it("round-trips a symbol's own labels, which the graph holds as text annotations", () => {
+    const graph = new SceneGraph();
+    populateGraph(graph, { ...original, texts: [{ x: 0, y: -6, text: 'NC', size: 4 }] });
+    expect(graph.texts.size).toBe(1);
+    expect(graphToGeometry(graph, original.ports).texts).toEqual([{ x: 0, y: -6, text: 'NC', size: 4 }]);
+  });
+
+  it('leaves `texts` absent for an unlabelled symbol, rather than writing an empty list', () => {
+    const graph = new SceneGraph();
+    populateGraph(graph, original);
+    expect(graphToGeometry(graph, original.ports).texts).toBeUndefined();
+  });
+
   it('skips edges referencing points that do not exist', () => {
     const graph = new SceneGraph();
     populateGraph(graph, { ...original, lines: [['a', 'b'], ['a', 'missing']] });
@@ -48,6 +64,51 @@ describe('populateGraph / graphToGeometry', () => {
     populateGraph(graph, original);
     graph.removePoint('c'); // still used by the arc — refused, so 'c' survives
     expect(graphToGeometry(graph, ['a', 'gone']).ports).toEqual(['a']);
+  });
+});
+
+/** The toolbar's Text size field: what it may hand to the graph, and that a size set there
+ * reaches both the saved symbol and the editor's undo history. */
+describe('label sizing', () => {
+  it('leaves a usable size alone, the default included', () => {
+    expect(clampTextSize(DEFAULT_TEXT_SIZE)).toBe(DEFAULT_TEXT_SIZE);
+    expect(clampTextSize(7.5)).toBe(7.5);
+    // The bounds themselves are usable values, not the first rejected ones.
+    expect(clampTextSize(MIN_TEXT_SIZE)).toBe(MIN_TEXT_SIZE);
+    expect(clampTextSize(MAX_TEXT_SIZE)).toBe(MAX_TEXT_SIZE);
+  });
+
+  it('pulls a zero, negative or absurd size back into the drawable range', () => {
+    expect(clampTextSize(0)).toBe(MIN_TEXT_SIZE);
+    expect(clampTextSize(-4)).toBe(MIN_TEXT_SIZE);
+    expect(clampTextSize(1000)).toBe(MAX_TEXT_SIZE);
+  });
+
+  it('saves a resized label at its new size', () => {
+    const graph = new SceneGraph();
+    populateGraph(graph, {
+      points: { a: { x: 0, y: 0 } },
+      lines: [],
+      arcs: [],
+      ports: ['a'],
+      texts: [{ x: 0, y: -6, text: 'NC', size: DEFAULT_TEXT_SIZE }],
+    });
+    const id = [...graph.texts.values()][0].id;
+    graph.setTextFontSize(id, 9);
+
+    expect(graphToGeometry(graph, ['a']).texts).toEqual([{ x: 0, y: -6, text: 'NC', size: 9 }]);
+  });
+
+  it('carries a label size through a history snapshot, which is what makes a resize undoable', () => {
+    const graph = new SceneGraph();
+    graph.addText(0, -6, 'NC', DEFAULT_TEXT_SIZE, 't0');
+    // The editor's undo stack is exactly SceneGraph.toJSON -> fromJSON (see EditorSnapshot),
+    // so a size that didn't survive it would be silently un-undoable.
+    const before = graph.toJSON();
+    graph.setTextFontSize('t0', 9);
+
+    expect(SceneGraph.fromJSON(before).texts.get('t0')!.fontSize).toBe(DEFAULT_TEXT_SIZE);
+    expect(SceneGraph.fromJSON(graph.toJSON()).texts.get('t0')!.fontSize).toBe(9);
   });
 });
 
@@ -102,7 +163,7 @@ describe('marquee selection', () => {
       arcs: [{ a: 'a', b: 'far', bulge: 0.5 }],
       ports: [],
     });
-    const sel = selectInsideRect(graph, rect, { points: new Set(), lines: new Set(), arcs: new Set() });
+    const sel = selectInsideRect(graph, rect, { points: new Set(), lines: new Set(), arcs: new Set(), texts: new Set() });
 
     expect([...sel.points].sort()).toEqual(['a', 'b']);
     // 'b'->'far' only half overlaps the marquee, so neither it nor the arc is picked up.
@@ -113,7 +174,7 @@ describe('marquee selection', () => {
   it('extends the selection it is given rather than replacing it', () => {
     const graph = new SceneGraph();
     graph.addPoint(0, 0, 'inside');
-    const base = { points: new Set(['kept']), lines: new Set<string>(), arcs: new Set<string>() };
+    const base = { points: new Set(['kept']), lines: new Set<string>(), arcs: new Set<string>(), texts: new Set<string>() };
     expect([...selectInsideRect(graph, rect, base).points].sort()).toEqual(['inside', 'kept']);
   });
 });
@@ -129,7 +190,7 @@ describe('selectionPointIds', () => {
     });
     const lineId = [...graph.lines.values()][0].id;
     const arcId = [...graph.arcs.values()][0].id;
-    const sel = { points: new Set(['lone']), lines: new Set([lineId]), arcs: new Set([arcId]) };
+    const sel = { points: new Set(['lone']), lines: new Set([lineId]), arcs: new Set([arcId]), texts: new Set<string>() };
 
     expect([...selectionPointIds(graph, sel)].sort()).toEqual(['a', 'b', 'c', 'd', 'lone']);
   });
@@ -137,19 +198,8 @@ describe('selectionPointIds', () => {
   it('ignores a selected edge id that no longer exists', () => {
     const graph = new SceneGraph();
     graph.addPoint(0, 0, 'a');
-    const sel = { points: new Set(['a']), lines: new Set(['gone']), arcs: new Set<string>() };
+    const sel = { points: new Set(['a']), lines: new Set(['gone']), arcs: new Set<string>(), texts: new Set<string>() };
     expect([...selectionPointIds(graph, sel)]).toEqual(['a']);
-  });
-});
-
-describe('quantizeDelta', () => {
-  it('rounds each axis to the nearest grid multiple independently', () => {
-    expect(quantizeDelta(4.9, -3.1, 2)).toEqual({ x: 4, y: -4 });
-    expect(quantizeDelta(5.1, 0.9, 2)).toEqual({ x: 6, y: 0 });
-  });
-
-  it('passes the delta through unchanged when gridSize is zero (grid disabled)', () => {
-    expect(quantizeDelta(3.456, -1.234, 0)).toEqual({ x: 3.456, y: -1.234 });
   });
 });
 

@@ -25,9 +25,12 @@ import {
   distance,
   projectPointOnArc,
   projectPointOnSegment,
+  textHalfExtent,
 } from '../canvas/geometry';
 import { SceneGraph } from '../canvas/sceneGraph';
-import { computeSnap } from '../canvas/snapping';
+import { computeSnap, type SnapOptions, type SnapResult } from '../canvas/snapping';
+import { SYMBOL_FILE_EXTENSION } from '../io/symbolFormat';
+import { exportSymbol, importSymbol } from '../io/symbolIO';
 import { applyTextFieldMenuAction, isTextEditableFocus, onNativeMenuAction } from '../platform/menuBridge';
 import type { Id, SceneGraphJSON, SymbolGeometry, Vec2 } from '../types/geometry';
 import { resolveSymbol } from './builtinSymbols';
@@ -50,26 +53,37 @@ const DEFAULT_IMAGE_WIDTH = 28;
 /** Local units a pasted copy is nudged by, so it doesn't land exactly on its original.
  * Repeated pastes of the same clipboard cascade by multiples of this. */
 const PASTE_OFFSET = 2;
+/** Height (in local units) of a freshly placed label — a few units inside the ±14 box a
+ * built-in glyph is drawn to, so a default label reads without swamping the symbol. */
+const DEFAULT_TEXT_SIZE = 4;
+/** Bounds on a label's height, in the same local units. The floor is a tenth of a unit
+ * because a label below that is sub-pixel on a placed instance (componentScale × zoom is
+ * around 1 at the default view) — invisible, and so unclickable to fix. The ceiling is the
+ * half-extent this fixed-zoom canvas can show, so a label can never be sized past the edge
+ * of the only view the user has of it. */
+const MIN_TEXT_SIZE = 0.1;
+const MAX_TEXT_SIZE = CANVAS_PX / 2 / PX_PER_UNIT;
 
 type EditorTab = 'draw' | 'image';
 /** Same order as the main app's own toolbar (Toolbar.tsx) — Select, Line, Arc, Point,
- * Circle — so the two tool rows read as the same tool set, not a different order to
+ * Circle, Text — so the two tool rows read as the same tool set, not a different order to
  * relearn just because this modal is open. */
-type DrawTool = 'select' | 'line' | 'arc' | 'point' | 'circle';
+type DrawTool = 'select' | 'line' | 'arc' | 'point' | 'circle' | 'text';
 /** Hotkeys deliberately mirror the main app's own tool letters (see SketchCanvas's key
  * handler) — muscle memory shouldn't change just because this modal is open. */
-const TOOL_HOTKEYS: Record<DrawTool, string> = { select: 'V', line: 'L', arc: 'A', point: 'P', circle: 'C' };
-const HOTKEY_TOOLS: Record<string, DrawTool> = { v: 'select', l: 'line', a: 'arc', p: 'point', c: 'circle' };
+const TOOL_HOTKEYS: Record<DrawTool, string> = { select: 'V', line: 'L', arc: 'A', point: 'P', circle: 'C', text: 'T' };
+const HOTKEY_TOOLS: Record<string, DrawTool> = { v: 'select', l: 'line', a: 'arc', p: 'point', c: 'circle', t: 'text' };
 
 /** What one click landed on — the atom a selection is built from. */
-type DrawHit = { kind: 'point' | 'line' | 'arc'; id: Id } | null;
+type DrawHit = { kind: 'point' | 'line' | 'arc' | 'text'; id: Id } | null;
 
-/** The selection is multi-item (shift-click and marquee), so it's three id sets rather
+/** The selection is multi-item (shift-click and marquee), so it's a set per kind rather
  * than a single `{kind, id}`: a marquee routinely spans a mix of points, lines and arcs. */
 interface DrawSelection {
   points: Set<Id>;
   lines: Set<Id>;
   arcs: Set<Id>;
+  texts: Set<Id>;
 }
 
 /** Geometry-only copy buffer (a `SymbolGeometry` minus ports/image). Copy/paste duplicates
@@ -78,6 +92,17 @@ interface DrawClipboard {
   points: { id: Id; x: number; y: number }[];
   lines: [Id, Id][];
   arcs: { a: Id; b: Id; bulge: number }[];
+  texts: { x: number; y: number; text: string; size: number }[];
+}
+
+/** The inline label editor, mirroring the main canvas's (see SketchCanvas's
+ * TextEditorState): an `<input>` over the mini canvas where the label will be drawn. `id`
+ * is the label being re-edited, or null while placing a new one. */
+interface TextEditorState {
+  id: Id | null;
+  local: Vec2;
+  size: number;
+  value: string;
 }
 
 interface LocalRect {
@@ -102,20 +127,21 @@ function snapshotsEqual(a: EditorSnapshot, b: EditorSnapshot): boolean {
 /** An in-progress drag of one or more points (Select tool). `singlePointId` is set only
  * when dragging exactly one point directly — that's the one case with an unambiguous
  * "point being moved" to run a full grid+endpoint snap search against; a group/edge drag
- * instead quantizes the raw pointer delta to the grid (see quantizeDelta). */
+ * instead quantizes the raw pointer delta to the grid (computeSnap's `gridMode: 'delta'`). */
 interface GroupDrag {
   grabLocal: Vec2;
   pointOrigins: Map<Id, Vec2>;
+  textOrigins: Map<Id, Vec2>;
   singlePointId: Id | null;
   before: EditorSnapshot;
 }
 
 function emptySelection(): DrawSelection {
-  return { points: new Set(), lines: new Set(), arcs: new Set() };
+  return { points: new Set(), lines: new Set(), arcs: new Set(), texts: new Set() };
 }
 
 function selectionCount(sel: DrawSelection): number {
-  return sel.points.size + sel.lines.size + sel.arcs.size;
+  return sel.points.size + sel.lines.size + sel.arcs.size + sel.texts.size;
 }
 
 /** Corner-order-independent rect, so a marquee dragged up-left behaves like one dragged
@@ -143,13 +169,12 @@ function circleArcEndpoints(center: Vec2, rim: Vec2): { radius: number; a: Vec2;
   };
 }
 
-/** Rounds a pointer-drag delta to the nearest grid multiple on each axis — used for
- * group/edge drags, where (unlike a single dragged point) there's no one point to run an
- * endpoint/grid snap search against, so the whole group instead snaps as a unit by
- * quantizing how far it moved. */
-function quantizeDelta(dx: number, dy: number, gridSize: number): Vec2 {
-  if (gridSize <= 0) return { x: dx, y: dy };
-  return { x: Math.round(dx / gridSize) * gridSize, y: Math.round(dy / gridSize) * gridSize };
+/** This editor's binding of the shared snap: its zoom and grid are both fixed, so the only
+ * things a call site chooses are what it's snapping and which snaps apply. Callers pass
+ * `disabled: e.altKey` — Alt is the freehand escape hatch here exactly as it is on the main
+ * canvas, which matters more now that the grid snap itself is ungated. */
+function editorSnap(opts: Omit<SnapOptions, 'threshold' | 'gridSize'>): SnapResult {
+  return computeSnap({ ...opts, threshold: PICK_PX / PX_PER_UNIT, gridSize: GRID_UNITS });
 }
 
 /** A port placed on an uploaded image. Image symbols have no other geometry, so every
@@ -176,7 +201,14 @@ function screenToLocal(p: Vec2): Vec2 {
  */
 function freshId(graph: SceneGraph, prefix: string): Id {
   let n = 0;
-  while (graph.points.has(`${prefix}${n}`) || graph.lines.has(`${prefix}${n}`) || graph.arcs.has(`${prefix}${n}`)) n++;
+  while (
+    graph.points.has(`${prefix}${n}`) ||
+    graph.lines.has(`${prefix}${n}`) ||
+    graph.arcs.has(`${prefix}${n}`) ||
+    graph.texts.has(`${prefix}${n}`)
+  ) {
+    n++;
+  }
   return `${prefix}${n}`;
 }
 
@@ -191,16 +223,23 @@ function populateGraph(graph: SceneGraph, geometry: SymbolGeometry) {
   for (const arc of geometry.arcs) {
     if (graph.points.has(arc.a) && graph.points.has(arc.b)) graph.addArc(arc.a, arc.b, arc.bulge, freshId(graph, 'a'));
   }
+  // Labels get editing-session ids (they have none in the stored symbol — see SymbolText),
+  // exactly like lines and arcs do.
+  for (const text of geometry.texts ?? []) graph.addText(text.x, text.y, text.text, text.size, freshId(graph, 't'));
 }
 
 /** The inverse of `populateGraph`: the editing graph as the persisted symbol shape.
  * `ports` keeps the user's marking order, which is the connection order downstream. */
 function graphToGeometry(graph: SceneGraph, ports: string[]): SymbolGeometry {
+  const texts = [...graph.texts.values()].map((t) => ({ x: t.x, y: t.y, text: t.text, size: t.fontSize }));
   return {
     points: Object.fromEntries([...graph.points.values()].map((p) => [p.id, { x: p.x, y: p.y }])),
     lines: [...graph.lines.values()].map((l) => [l.startId, l.endId] as [string, string]),
     arcs: [...graph.arcs.values()].map((a) => ({ a: a.startId, b: a.endId, bulge: a.bulge })),
     ports: ports.filter((id) => graph.points.has(id)),
+    // Absent rather than `[]` when there are none, so an unlabelled symbol serializes the
+    // same way every symbol authored before labels existed does (see symbolFormat.ts).
+    ...(texts.length > 0 ? { texts } : {}),
   };
 }
 
@@ -319,6 +358,15 @@ function hitTest(graph: SceneGraph, local: Vec2): DrawHit {
     if (d <= tol && (!best || d < best.d)) best = { sel: { kind: 'point', id: p.id }, d };
   }
   if (best) return best.sel;
+  // A label is grabbed anywhere inside its box (it has no stroke or anchor to aim at), and
+  // wins over the edges it may sit on top of — same rule as the main canvas's select tool.
+  for (const t of graph.texts.values()) {
+    const half = textHalfExtent(t.text, t.fontSize);
+    if (Math.abs(local.x - t.x) > half.x || Math.abs(local.y - t.y) > half.y) continue;
+    const d = distance(local, t);
+    if (!best || d < best.d) best = { sel: { kind: 'text', id: t.id }, d };
+  }
+  if (best) return best.sel;
   for (const line of graph.lines.values()) {
     const a = graph.points.get(line.startId);
     const b = graph.points.get(line.endId);
@@ -339,8 +387,10 @@ function hitTest(graph: SceneGraph, local: Vec2): DrawHit {
 /** Applies one click to the selection: replace by default, toggle when `additive`
  * (Shift/Ctrl/Cmd) — the same convention as the main app's selectTool. */
 function withHit(prev: DrawSelection, hit: NonNullable<DrawHit>, additive: boolean): DrawSelection {
-  const next = additive ? { points: new Set(prev.points), lines: new Set(prev.lines), arcs: new Set(prev.arcs) } : emptySelection();
-  const bucket = hit.kind === 'point' ? next.points : hit.kind === 'line' ? next.lines : next.arcs;
+  const next = additive
+    ? { points: new Set(prev.points), lines: new Set(prev.lines), arcs: new Set(prev.arcs), texts: new Set(prev.texts) }
+    : emptySelection();
+  const bucket = hit.kind === 'point' ? next.points : hit.kind === 'line' ? next.lines : hit.kind === 'arc' ? next.arcs : next.texts;
   if (additive && bucket.has(hit.id)) bucket.delete(hit.id);
   else bucket.add(hit.id);
   return next;
@@ -350,7 +400,7 @@ function withHit(prev: DrawSelection, hit: NonNullable<DrawHit>, additive: boole
  * inside it (partial overlaps are left out — same "fully inside" rule as the main app's
  * `selectOnPointerUp`). `base` is the selection being extended, or an empty one. */
 function selectInsideRect(graph: SceneGraph, rect: LocalRect, base: DrawSelection): DrawSelection {
-  const next = { points: new Set(base.points), lines: new Set(base.lines), arcs: new Set(base.arcs) };
+  const next = { points: new Set(base.points), lines: new Set(base.lines), arcs: new Set(base.arcs), texts: new Set(base.texts) };
   for (const p of graph.points.values()) if (pointInRect(p, rect)) next.points.add(p.id);
   for (const line of graph.lines.values()) {
     const a = graph.points.get(line.startId);
@@ -362,6 +412,9 @@ function selectInsideRect(graph: SceneGraph, rect: LocalRect, base: DrawSelectio
     const b = graph.points.get(arc.endId);
     if (a && b && pointInRect(a, rect) && pointInRect(b, rect)) next.arcs.add(arc.id);
   }
+  // A label is caught by its anchor, not its whole box — the same "where the thing is"
+  // rule the main canvas's marquee uses for components and notes.
+  for (const t of graph.texts.values()) if (pointInRect(t, rect)) next.texts.add(t.id);
   return next;
 }
 
@@ -401,7 +454,11 @@ function clipboardFromSelection(graph: SceneGraph, sel: DrawSelection): DrawClip
     .map((id) => graph.points.get(id))
     .filter((p): p is NonNullable<typeof p> => !!p)
     .map((p) => ({ id: p.id, x: p.x, y: p.y }));
-  if (points.length === 0) return null;
+  const texts = [...sel.texts]
+    .map((id) => graph.texts.get(id))
+    .filter((t): t is NonNullable<typeof t> => !!t)
+    .map((t) => ({ x: t.x, y: t.y, text: t.text, size: t.fontSize }));
+  if (points.length === 0 && texts.length === 0) return null;
 
   const lines: [Id, Id][] = [];
   for (const line of graph.lines.values()) {
@@ -411,12 +468,21 @@ function clipboardFromSelection(graph: SceneGraph, sel: DrawSelection): DrawClip
     .filter((arc) => pointIds.has(arc.startId) && pointIds.has(arc.endId))
     .map((arc) => ({ a: arc.startId, b: arc.endId, bulge: arc.bulge }));
 
-  return { points, lines, arcs };
+  return { points, lines, arcs, texts };
 }
 
 /** Trims float noise out of a derived dimension so the width/height inputs stay readable. */
 function formatUnits(value: number): string {
   return String(Math.round(value * 100) / 100);
+}
+
+/** Pins a typed label height into the drawable/renderable range. Clamping rather than
+ * rejecting, so an out-of-range number still does the nearest sensible thing (and the field
+ * is rewritten to the clamped value on commit, so it never claims a size that wasn't
+ * applied). The `size > 0` guard in SceneGraph.setTextFontSize stays the last line of
+ * defence — this is the editor's own, tighter policy. */
+function clampTextSize(size: number): number {
+  return Math.min(MAX_TEXT_SIZE, Math.max(MIN_TEXT_SIZE, size));
 }
 
 export function SymbolEditor({ category, onClose, onSaved }: { category: db.Category; onClose: () => void; onSaved: () => void }) {
@@ -433,6 +499,10 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Transient confirmation for the file actions (exported / imported, and whether the
+   * import had to be rescaled) — the same muted-status idiom the library panel's sync row
+   * uses. Distinct from `error`: these aren't failures. */
+  const [notice, setNotice] = useState<string | null>(null);
   /** Bumped after every graph mutation — the graph lives in a ref, so this is what tells
    * React (and the draw effect) that the canvas is stale. */
   const [version, setVersion] = useState(0);
@@ -451,6 +521,22 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
   const [marquee, setMarquee] = useState<{ origin: Vec2; current: Vec2; additive: boolean } | null>(null);
   /** In-flight point/edge/group drag (Select tool on a hit); null when not dragging. */
   const [groupDrag, setGroupDrag] = useState<GroupDrag | null>(null);
+  /** The open inline label editor, or null. Mirrored into a ref for the same reason
+   * `ports` is (and the same reason SketchCanvas mirrors its own): the commit path is
+   * driven by the input's `blur`, so "is an editor still open?" has to be answerable
+   * synchronously mid-handler rather than from the last render's closure. */
+  const [textEditor, setTextEditor] = useState<TextEditorState | null>(null);
+  const textEditorRef = useRef<TextEditorState | null>(null);
+  const putTextEditor = useCallback((next: TextEditorState | null) => {
+    textEditorRef.current = next;
+    setTextEditor(next);
+  }, []);
+  /** The toolbar's label-height field, held as raw text (not a number) for the same reason
+   * the image tab's width/height are: a half-typed "" or "1." has to survive keystroke to
+   * keystroke without the field fighting back. It doubles as the "pen" setting — the size
+   * the next placed label gets — and as the readout for whichever label is in hand, which
+   * is why it's re-pointed at a label whenever one is clicked or opened for editing. */
+  const [textSizeText, setTextSizeText] = useState(String(DEFAULT_TEXT_SIZE));
   const [clipboard, setClipboard] = useState<DrawClipboard | null>(null);
   /** How many times the current clipboard has been pasted, so repeats cascade instead of
    * stacking on top of each other. Reset by every copy. */
@@ -496,6 +582,48 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
   const drawCanvasRef = useRef<HTMLCanvasElement>(null);
   const imageCanvasRef = useRef<HTMLCanvasElement>(null);
 
+  /** Makes a `SymbolGeometry` the thing being edited — the initial content, or an imported
+   * file. Replaces the graph wholesale (the same swap undo/redo does) rather than merging
+   * into whatever's there, and opens the tab that authored the symbol. `isStale` guards the
+   * image decode, which finishes asynchronously and may outlive the editor. */
+  const applyGeometry = (geometry: SymbolGeometry, isStale: () => boolean = () => false) => {
+    const nextGraph = new SceneGraph();
+    graphRef.current = nextGraph;
+    populateGraph(nextGraph, geometry);
+    setPortsSynced(geometry.ports.filter((id) => nextGraph.points.has(id)));
+    setTab(geometry.image ? 'image' : 'draw');
+    if (geometry.image) {
+      // Image symbol: open on the tab that made it, prefilled.
+      setImageDataUrl(geometry.image.dataUrl);
+      setWidthText(formatUnits(geometry.image.width));
+      setHeightText(formatUnits(geometry.image.height));
+      setImagePorts(
+        geometry.ports.filter((id) => geometry.points[id]).map((id) => ({ id, x: geometry.points[id].x, y: geometry.points[id].y })),
+      );
+      // Past the highest existing suffix, not just the count — ports removed before a
+      // previous save leave gaps, and reusing a gap id would collide.
+      imagePortCounter.current = geometry.ports.reduce((max, id) => {
+        const n = parseInt(id.replace(/^port/, ''), 10);
+        return Number.isNaN(n) ? max : Math.max(max, n + 1);
+      }, 0);
+      const img = new Image();
+      img.onload = () => {
+        if (isStale()) return;
+        setAspect(img.naturalHeight > 0 ? img.naturalWidth / img.naturalHeight : null);
+        setImageEl(img);
+      };
+      img.src = geometry.image.dataUrl;
+    } else {
+      // A vector symbol replacing a raster one has to clear the image tab as well, or the
+      // old body stays behind on it, ready to be saved over the new drawing.
+      setImageDataUrl(null);
+      setImageEl(null);
+      setAspect(null);
+      setImagePorts([]);
+    }
+    bump();
+  };
+
   // Initial content: the category's own stored symbol if it has one, otherwise the
   // built-in/placeholder symbol it currently renders as — so "Edit Drawing" always opens
   // on what the user already sees on the canvas, as an editable starting point.
@@ -506,34 +634,7 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
         const stored = category.symbolId ? await db.getSymbol(category.symbolId) : null;
         const geometry = stored?.geometry ?? resolveSymbol(category.subtype, category.actuation, category.portCount);
         if (cancelled) return;
-        populateGraph(graph, geometry);
-        setPortsSynced(geometry.ports.filter((id) => graph.points.has(id)));
-        if (geometry.image) {
-          // Stored image symbol: open on the tab that made it, prefilled.
-          setTab('image');
-          setImageDataUrl(geometry.image.dataUrl);
-          setWidthText(formatUnits(geometry.image.width));
-          setHeightText(formatUnits(geometry.image.height));
-          setImagePorts(
-            geometry.ports
-              .filter((id) => geometry.points[id])
-              .map((id) => ({ id, x: geometry.points[id].x, y: geometry.points[id].y })),
-          );
-          // Past the highest existing suffix, not just the count — ports removed before a
-          // previous save leave gaps, and reusing a gap id would collide.
-          imagePortCounter.current = geometry.ports.reduce((max, id) => {
-            const n = parseInt(id.replace(/^port/, ''), 10);
-            return Number.isNaN(n) ? max : Math.max(max, n + 1);
-          }, 0);
-          const img = new Image();
-          img.onload = () => {
-            if (cancelled) return;
-            setAspect(img.naturalHeight > 0 ? img.naturalWidth / img.naturalHeight : null);
-            setImageEl(img);
-          };
-          img.src = geometry.image.dataUrl;
-        }
-        bump();
+        applyGeometry(geometry, () => cancelled);
       } catch (e) {
         if (!cancelled) setError(describeError(e));
       } finally {
@@ -556,7 +657,8 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
     setCircleCursor(null);
     setMarquee(null);
     setGroupDrag(null);
-  }, []);
+    putTextEditor(null); // an abandoned label was never in the graph, so there's nothing to undo
+  }, [putTextEditor]);
 
   const deleteSelected = useCallback(() => {
     if (selectionCount(selection) === 0) return;
@@ -567,6 +669,7 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
     // an edge and its endpoints deletes cleanly in one go.
     for (const id of selection.arcs) graph.removeArc(id);
     for (const id of selection.lines) graph.removeLine(id);
+    for (const id of selection.texts) graph.removeText(id);
 
     const removed: Id[] = [];
     const blocked: Id[] = [];
@@ -588,7 +691,7 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
           : `${blocked.length} points are still used by a line or arc — delete those first.`,
       );
     }
-    setSelection({ points: new Set(blocked), lines: new Set(), arcs: new Set() });
+    setSelection({ points: new Set(blocked), lines: new Set(), arcs: new Set(), texts: new Set() });
     pushHistoryIfChanged(before);
     bump();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -627,12 +730,73 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
       const created = graph.addArc(idMap.get(arc.a)!, idMap.get(arc.b)!, arc.bulge, freshId(graph, 'a'));
       if (created) arcs.add(created.id);
     }
+    const texts = new Set<Id>();
+    for (const t of clipboard.texts) {
+      texts.add(graph.addText(t.x + offset, t.y + offset, t.text, t.size, freshId(graph, 't')).id);
+    }
     setPasteCount((n) => n + 1);
-    setSelection({ points, lines, arcs });
+    setSelection({ points, lines, arcs, texts });
     pushHistoryIfChanged(before);
     bump();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clipboard, graph, pasteCount]);
+
+  /** The height a label placed right now would get: what's in the size field, clamped, or
+   * the default while that field is empty/mid-edit. Clamped here as well as on commit so a
+   * value typed but never committed still can't place an unusable label. */
+  const currentTextSize = (): number => {
+    const parsed = parseFloat(textSizeText);
+    return Number.isFinite(parsed) ? clampTextSize(parsed) : DEFAULT_TEXT_SIZE;
+  };
+
+  /** Points the size field at a label the user has just taken in hand (clicked, or opened
+   * for editing), so it reads as that label's height rather than as a stale pen setting. */
+  const showTextSize = (size: number) => setTextSizeText(formatUnits(size));
+
+  /** Applies the size field to every selected label, as one undo entry. Also normalizes the
+   * field itself, so a typed "0" or "999" visibly becomes the size that was really used.
+   * With nothing selected this is purely the pen setting for the next label — no graph
+   * mutation, and so nothing to undo. */
+  const commitTextSize = () => {
+    const size = currentTextSize();
+    setTextSizeText(formatUnits(size));
+    if (selection.texts.size === 0) return;
+    const before = captureSnapshot();
+    for (const id of selection.texts) graph.setTextFontSize(id, size);
+    pushHistoryIfChanged(before);
+    bump();
+  };
+
+  /** Writes the open label editor into the editing graph and closes it. Closes *first*, so
+   * the blur that follows a click elsewhere finds nothing left to commit instead of
+   * committing the same label twice. Blank content places nothing (and deletes the label
+   * being edited) — an empty label would be invisible and unclickable. */
+  const commitTextEditor = useCallback(() => {
+    const editor = textEditorRef.current;
+    if (!editor) return;
+    putTextEditor(null);
+    const before = captureSnapshot();
+    if (editor.id === null) {
+      if (editor.value.trim()) {
+        const created = graph.addText(editor.local.x, editor.local.y, editor.value, editor.size, freshId(graph, 't'));
+        setSelection({ points: new Set(), lines: new Set(), arcs: new Set(), texts: new Set([created.id]) });
+      }
+    } else {
+      graph.setTextContent(editor.id, editor.value);
+      // The editor carries the label's height as well as its content (it's what the inline
+      // input is sized by), so both land in the same history entry.
+      graph.setTextFontSize(editor.id, editor.size);
+      // Leaving the edited label selected is what keeps the toolbar's size field acting on
+      // it after the editor closes: reaching that field necessarily blurs — and therefore
+      // commits — the inline input. Blank content deleted the label, so check it survived.
+      if (graph.texts.has(editor.id)) {
+        setSelection({ points: new Set(), lines: new Set(), arcs: new Set(), texts: new Set([editor.id]) });
+      }
+    }
+    pushHistoryIfChanged(before);
+    bump();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [graph, putTextEditor]);
 
   /** Undo/redo are deliberately near-static callbacks (their only real dependency is
    * `cancelPending`, itself static) — everything they touch is a ref or a React state
@@ -680,6 +844,12 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
       const isEditingText = !!target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA');
       if (e.key === 'Escape') {
         e.stopPropagation();
+        // Clearing the editor before the blur means the blur has nothing left to commit —
+        // Escape abandons a half-typed label rather than saving it.
+        if (textEditorRef.current) {
+          putTextEditor(null);
+          return;
+        }
         if (isEditingText) (target as HTMLElement).blur();
         if (tab === 'draw') {
           if (pendingLine || pendingArc || pendingCircle || marquee || groupDrag) cancelPending();
@@ -728,6 +898,7 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
     pendingArc,
     pendingCircle,
     pendingLine,
+    putTextEditor,
     redo,
     tab,
     tool,
@@ -796,6 +967,17 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
       strokeLocalArc(ctx, a, b, arc.bulge);
     }
 
+    // Labels, centered on their anchor exactly like renderer.ts draws them on the main
+    // canvas — same size convention too (local units, scaled by PX_PER_UNIT here).
+    for (const label of graph.texts.values()) {
+      const s = localToScreen(label);
+      ctx.fillStyle = selection.texts.has(label.id) ? colors.accent : colors.line;
+      ctx.font = `${label.fontSize * PX_PER_UNIT}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label.text, s.x, s.y);
+    }
+
     // Live radius preview between the centre click and the cursor, dashed so it reads as
     // not-yet-committed (the pending line/arc endpoints get the same "in progress" accent).
     if (pendingCircle) {
@@ -847,6 +1029,13 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
   }, [graph, ports, selection, marquee, pendingArc, pendingCircle, circleCursor, pendingLine, tab, version]);
 
   const onDrawPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    // A click on the canvas finishes an open label editor and does nothing else — same
+    // reason as the main canvas: committing *and* starting the next gesture in one click
+    // would depend on whether the input's blur lands before or after this handler.
+    if (textEditorRef.current) {
+      commitTextEditor();
+      return;
+    }
     const rect = e.currentTarget.getBoundingClientRect();
     const local = screenToLocal({ x: e.clientX - rect.left, y: e.clientY - rect.top });
     setError(null);
@@ -864,6 +1053,13 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
         return;
       }
 
+      // Clicking a label — additively or not — makes it the one the size field reads out
+      // and (on commit) resizes.
+      if (hit.kind === 'text') {
+        const label = graph.texts.get(hit.id);
+        if (label) showTextSize(label.fontSize);
+      }
+
       if (additive) {
         setSelection((prev) => withHit(prev, hit, true));
         bump();
@@ -877,7 +1073,8 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
       const alreadyIn =
         (hit.kind === 'point' && selection.points.has(hit.id)) ||
         (hit.kind === 'line' && selection.lines.has(hit.id)) ||
-        (hit.kind === 'arc' && selection.arcs.has(hit.id));
+        (hit.kind === 'arc' && selection.arcs.has(hit.id)) ||
+        (hit.kind === 'text' && selection.texts.has(hit.id));
 
       let dragSelection: DrawSelection;
       if (alreadyIn && selectionCount(selection) > 1) {
@@ -885,7 +1082,7 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
       } else {
         dragSelection = withHit(emptySelection(), hit, false);
         setSelection(dragSelection);
-        if (hit.kind !== 'point') {
+        if (hit.kind === 'line' || hit.kind === 'arc') {
           // A freshly-selected lone line/arc only drags as a rigid pair when neither
           // endpoint is shared with other geometry — otherwise this would silently tear
           // that joint (same rule as the main app's select tool / endpointsAreUnshared).
@@ -903,11 +1100,17 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
         const p = graph.points.get(id);
         if (p) pointOrigins.set(id, { x: p.x, y: p.y });
       }
-      if (pointOrigins.size > 0) {
+      const textOrigins = new Map<Id, Vec2>();
+      for (const id of dragSelection.texts) {
+        const t = graph.texts.get(id);
+        if (t) textOrigins.set(id, { x: t.x, y: t.y });
+      }
+      if (pointOrigins.size + textOrigins.size > 0) {
         e.currentTarget.setPointerCapture(e.pointerId);
         setGroupDrag({
           grabLocal: local,
           pointOrigins,
+          textOrigins,
           singlePointId: hit.kind === 'point' && pointOrigins.size === 1 ? hit.id : null,
           before: captureSnapshot(),
         });
@@ -916,12 +1119,32 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
       return;
     }
 
-    const snap = computeSnap({ cursor: local, graph, threshold: PICK_PX / PX_PER_UNIT, gridSize: GRID_UNITS });
+    if (tool === 'text') {
+      // Same flow as the main canvas's Text tool: click where the label goes and type it
+      // in place, or click an existing label to re-open it. Nothing reaches the graph
+      // until the editor commits. preventDefault for the same reason SketchCanvas does —
+      // the click's default focus change would blur the editor as it opens.
+      e.preventDefault();
+      const hit = hitTest(graph, local);
+      const existing = hit?.kind === 'text' ? graph.texts.get(hit.id) : undefined;
+      if (existing) {
+        showTextSize(existing.fontSize);
+        putTextEditor({ id: existing.id, local: { x: existing.x, y: existing.y }, size: existing.fontSize, value: existing.text });
+      } else {
+        // No endpoint snap, matching the main canvas's Text tool: a label is not a vertex,
+        // so landing it on a point would bury it under the geometry it annotates.
+        const placement = editorSnap({ cursor: local, graph, allowEndpoint: false, disabled: e.altKey });
+        putTextEditor({ id: null, local: placement.point, size: currentTextSize(), value: '' });
+      }
+      return;
+    }
+
+    const snap = editorSnap({ cursor: local, graph, disabled: e.altKey });
     const pointAt = (): Id => snap.snappedPointId ?? graph.addPoint(snap.point.x, snap.point.y, freshId(graph, 'p')).id;
     const before = captureSnapshot();
 
     if (tool === 'point') {
-      setSelection({ points: new Set([pointAt()]), lines: new Set(), arcs: new Set() });
+      setSelection({ points: new Set([pointAt()]), lines: new Set(), arcs: new Set(), texts: new Set() });
     } else if (tool === 'line') {
       const id = pointAt();
       if (pendingLine === null) {
@@ -961,6 +1184,7 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
             points: new Set(),
             lines: new Set(),
             arcs: new Set([top?.id, bottom?.id].filter((id): id is Id => !!id)),
+            texts: new Set(),
           });
         }
         setPendingCircle(null);
@@ -982,19 +1206,16 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
         // The one case with an unambiguous point to run a real snap search against.
         const origin = groupDrag.pointOrigins.get(groupDrag.singlePointId)!;
         const target = { x: origin.x + delta.x, y: origin.y + delta.y };
-        const snap = computeSnap({
-          cursor: target,
-          graph,
-          threshold: PICK_PX / PX_PER_UNIT,
-          gridSize: GRID_UNITS,
-          excludePointId: groupDrag.singlePointId,
-        });
+        const snap = editorSnap({ cursor: target, graph, excludePointId: groupDrag.singlePointId, disabled: e.altKey });
         delta = { x: snap.point.x - origin.x, y: snap.point.y - origin.y };
       } else {
-        delta = quantizeDelta(delta.x, delta.y, GRID_UNITS);
+        delta = editorSnap({ cursor: delta, graph, gridMode: 'delta', disabled: e.altKey }).point;
       }
       for (const [id, origin] of groupDrag.pointOrigins) {
         graph.movePoint(id, origin.x + delta.x, origin.y + delta.y);
+      }
+      for (const [id, origin] of groupDrag.textOrigins) {
+        graph.moveText(id, origin.x + delta.x, origin.y + delta.y);
       }
       bump();
       return;
@@ -1004,7 +1225,7 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
       setMarquee((prev) => (prev ? { ...prev, current: local } : prev));
     } else if (pendingCircle) {
       // Preview against the snapped cursor, so what's drawn is the circle a click commits.
-      const snap = computeSnap({ cursor: local, graph, threshold: PICK_PX / PX_PER_UNIT, gridSize: GRID_UNITS });
+      const snap = editorSnap({ cursor: local, graph, disabled: e.altKey });
       setCircleCursor(snap.point);
     }
   };
@@ -1023,6 +1244,17 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
     setSelection((prev) => selectInsideRect(graph, rect, marquee.additive ? prev : emptySelection()));
     setMarquee(null);
     bump();
+  };
+
+  const onDrawDoubleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (tool !== 'select') return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const local = screenToLocal({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+    const hit = hitTest(graph, local);
+    const existing = hit?.kind === 'text' ? graph.texts.get(hit.id) : undefined;
+    if (!existing) return;
+    showTextSize(existing.fontSize);
+    putTextEditor({ id: existing.id, local: { x: existing.x, y: existing.y }, size: existing.fontSize, value: existing.text });
   };
 
   const selectedPointId = selection.points.size === 1 ? [...selection.points][0] : null;
@@ -1129,40 +1361,88 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
     }
   };
 
-  const saveDrawing = () => persist(graphToGeometry(graph, ports));
-
-  const saveImage = () => {
+  /** The symbol as the editor currently has it, or null (with `error` set) when the Image
+   * tab isn't filled in yet. Save and Export both go through this, so exporting always
+   * writes exactly what's on screen — unsaved edits included. */
+  const currentGeometry = (): SymbolGeometry | null => {
+    if (tab === 'draw') return graphToGeometry(graph, ports);
     if (!imageDataUrl) {
       setError('Choose an image file first.');
-      return Promise.resolve();
+      return null;
     }
     const width = parseFloat(widthText);
     const height = parseFloat(heightText);
     if (!(width > 0) || !(height > 0)) {
       setError('Width and height must be positive numbers.');
-      return Promise.resolve();
+      return null;
     }
     const points: Record<string, Vec2> = {};
     for (const p of imagePorts) points[p.id] = { x: p.x, y: p.y };
-    return persist({
+    return {
       points,
       lines: [],
       arcs: [],
       ports: imagePorts.map((p) => p.id),
       image: { dataUrl: imageDataUrl, width, height },
-    });
+    };
+  };
+
+  const saveSymbol = () => {
+    const geometry = currentGeometry();
+    return geometry ? persist(geometry) : Promise.resolve();
+  };
+
+  // ------------------------------------------------------- Exchanging symbols with files
+
+  /** Writes what's on screen out as a `.pnidsym.json` part drawing — vector or raster
+   * alike, since both are the same `SymbolGeometry` (see io/symbolFormat.ts). */
+  const runExport = async () => {
+    setError(null);
+    setNotice(null);
+    const geometry = currentGeometry();
+    if (!geometry) return;
+    try {
+      const meta = { name: category.name, subtype: category.subtype, actuation: category.actuation };
+      if (await exportSymbol(geometry, meta)) setNotice(`Exported "${category.name}" as a .${SYMBOL_FILE_EXTENSION} file.`);
+    } catch (e) {
+      setError(describeError(e));
+    }
+  };
+
+  /** Loads a part drawing from a file into this editing session rather than straight into
+   * the library: an import is then reviewable (and undoable) like any other edit, and
+   * nothing overwrites the category's saved symbol until Save Symbol. */
+  const runImport = async () => {
+    setError(null);
+    setNotice(null);
+    try {
+      const imported = await importSymbol();
+      if (!imported) return;
+      const before = captureSnapshot();
+      applyGeometry(imported.file.geometry);
+      pushHistoryIfChanged(before);
+      setNotice(
+        imported.scale === 1
+          ? `Imported "${imported.file.name}" — Save Symbol to keep it.`
+          : `Imported "${imported.file.name}", resized ×${formatUnits(imported.scale)} to this library's symbol scale — Save Symbol to keep it.`,
+      );
+    } catch (e) {
+      setError(describeError(e));
+    }
   };
 
   const drawHint =
     tool === 'select'
-      ? 'Click to select, or drag to move (a multi-selection drags as one group). Shift/Ctrl/Cmd-click to add/remove, or drag a box around several. Ctrl/Cmd+C/V copy/paste, Ctrl/Cmd+Z/Y undo/redo.'
+      ? 'Click to select, or drag to move (a multi-selection drags as one group). Shift/Ctrl/Cmd-click to add/remove, or drag a box around several. Text size resizes the selected labels. Ctrl/Cmd+C/V copy/paste, Ctrl/Cmd+Z/Y undo/redo.'
       : tool === 'line'
         ? 'Click a start point, then an end point. Escape cancels.'
         : tool === 'arc'
           ? 'Click start, then end, then a third point to set how far the arc bows. Escape cancels.'
           : tool === 'point'
             ? 'Click to place a point (snaps to the grid and to existing points).'
-            : 'Click the centre, then a point on the circle. Escape cancels.';
+            : tool === 'text'
+              ? 'Click where the label goes and type it, at the Text size set above. Enter keeps it, Escape discards it; click a label to re-edit it, then change Text size to resize it.'
+              : 'Click the centre, then a point on the circle. Escape cancels.';
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -1192,7 +1472,7 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
         ) : tab === 'draw' ? (
           <>
             <div className="symbol-editor-toolbar">
-              {(['select', 'line', 'arc', 'point', 'circle'] as DrawTool[]).map((t) => (
+              {(['select', 'line', 'arc', 'point', 'circle', 'text'] as DrawTool[]).map((t) => (
                 <button
                   key={t}
                   className={tool === t ? 'active' : ''}
@@ -1205,6 +1485,30 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
                   {t[0].toUpperCase() + t.slice(1)}
                 </button>
               ))}
+              {/* The Text tool's one option, so it sits with the tools rather than with the
+                  actions on the right: like the tool buttons, it says what the next click
+                  will place. It doubles as the resize control for labels already drawn —
+                  this modal has no per-entity properties panel to put one in, and a size
+                  that only applied to new labels would leave every existing label stuck at
+                  whatever it was placed at. */}
+              <label
+                className="symbol-editor-text-size"
+                title={`Label height in drawing units (${MIN_TEXT_SIZE}–${MAX_TEXT_SIZE}; a built-in symbol is about 28 units wide). Sets the next label placed, and resizes the selected ones.`}
+              >
+                Text size
+                <input
+                  type="number"
+                  step="any"
+                  min={MIN_TEXT_SIZE}
+                  max={MAX_TEXT_SIZE}
+                  value={textSizeText}
+                  onChange={(e) => setTextSizeText(e.target.value)}
+                  onBlur={commitTextSize}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') e.currentTarget.blur();
+                  }}
+                />
+              </label>
               <span className="symbol-editor-toolbar-gap" />
               <button onClick={togglePort} disabled={!selectedPointId} title="Mark/unmark the selected point as a connection port">
                 Toggle Port
@@ -1213,14 +1517,37 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
                 Delete Selected
               </button>
             </div>
-            <canvas
-              ref={drawCanvasRef}
-              className="symbol-editor-canvas"
-              style={{ width: CANVAS_PX, height: CANVAS_PX }}
-              onPointerDown={onDrawPointerDown}
-              onPointerMove={onDrawPointerMove}
-              onPointerUp={onDrawPointerUp}
-            />
+            {/* Positioned wrapper purely so the inline label editor can sit over the
+                canvas at the label's own spot, the way SketchCanvas's does. */}
+            <div className="symbol-editor-canvas-wrap" style={{ width: CANVAS_PX, height: CANVAS_PX }}>
+              <canvas
+                ref={drawCanvasRef}
+                className="symbol-editor-canvas"
+                style={{ width: CANVAS_PX, height: CANVAS_PX }}
+                onPointerDown={onDrawPointerDown}
+                onPointerMove={onDrawPointerMove}
+                onPointerUp={onDrawPointerUp}
+                onDoubleClick={onDrawDoubleClick}
+              />
+              {textEditor && (
+                <input
+                  className="canvas-text-editor"
+                  autoFocus
+                  value={textEditor.value}
+                  placeholder="Label…"
+                  style={{
+                    left: localToScreen(textEditor.local).x,
+                    top: localToScreen(textEditor.local).y,
+                    fontSize: `${textEditor.size * PX_PER_UNIT}px`,
+                  }}
+                  onChange={(e) => putTextEditor({ ...textEditor, value: e.target.value })}
+                  onBlur={commitTextEditor}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') e.currentTarget.blur();
+                  }}
+                />
+              )}
+            </div>
             <p className="library-muted">{drawHint}</p>
             <p className="library-muted">
               {ports.length} port{ports.length === 1 ? '' : 's'}
@@ -1268,14 +1595,29 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
         )}
 
         {error && <p className="field-error">{error}</p>}
+        {notice && <p className="library-muted">{notice}</p>}
 
         <div className="symbol-editor-footer">
+          {/* File actions sit apart from Cancel/Save: they move this drawing between
+              instances, they don't end the editing session. */}
+          <div className="symbol-editor-footer-files">
+            <button
+              disabled={saving || loading}
+              onClick={() => void runImport()}
+              title={`Import a part drawing from a .${SYMBOL_FILE_EXTENSION} file, replacing what's in this editor (Save Symbol still has to confirm it)`}
+            >
+              Import…
+            </button>
+            <button
+              disabled={saving || loading}
+              onClick={() => void runExport()}
+              title={`Export this part drawing to a .${SYMBOL_FILE_EXTENSION} file — ports, arcs and scale included — for import into another instance of OpnPnID`}
+            >
+              Export…
+            </button>
+          </div>
           <button onClick={onClose}>Cancel</button>
-          <button
-            className="symbol-editor-save"
-            disabled={saving || loading}
-            onClick={() => void (tab === 'draw' ? saveDrawing() : saveImage())}
-          >
+          <button className="symbol-editor-save" disabled={saving || loading} onClick={() => void saveSymbol()}>
             {saving ? 'Saving…' : 'Save Symbol'}
           </button>
         </div>
@@ -1286,12 +1628,15 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
 
 export {
   circleArcEndpoints,
+  clampTextSize,
+  DEFAULT_TEXT_SIZE,
   graphToGeometry,
   localToScreen,
+  MAX_TEXT_SIZE,
+  MIN_TEXT_SIZE,
   normalizeRect,
   pointInRect,
   populateGraph,
-  quantizeDelta,
   screenToLocal,
   selectInsideRect,
   selectionPointIds,
