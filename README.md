@@ -33,7 +33,8 @@ npm run tauri build   # produce a native installer
 ```
 
 On first launch the app creates a local `library.db` SQLite file in your OS app-data
-folder, with a small starter set of families and categories built in. **It works with no
+folder, seeded with the default library built into the app (families, categories, and
+hand-drawn symbols). **It works with no
 further setup.** Everything below is about growing that library into a real one.
 
 ---

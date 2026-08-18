@@ -272,6 +272,114 @@ fn library_migrations() -> Vec<Migration> {
                 );
             "#,
         },
+        Migration {
+            version: 7,
+            description: "replace_starter_library_with_default_library",
+            kind: MigrationKind::Up,
+            sql: r#"
+                -- Replaces the placeholder starter library seeded by migrations 2-4
+                -- with the maintainer's actual working library (families, categories,
+                -- hand-drawn symbols, attribute definitions), so a brand-new install
+                -- starts from real content instead of generic Valve/Pump/Instrument/
+                -- Fitting/Gas-Inlet placeholders. Full delete-then-reinsert of every
+                -- content table, child tables first so nothing dangles mid-migration;
+                -- real_parts is empty at the time this was captured, but cleared too
+                -- (via its FK to categories) for symmetry with the rest.
+                DELETE FROM attribute_definitions;
+                DELETE FROM real_parts;
+                DELETE FROM categories;
+                DELETE FROM families;
+                DELETE FROM symbols;
+
+                INSERT INTO families (id, name, tag_letter, sort_order) VALUES
+                    ('valve', 'Valve', 'V', 0),
+                    ('pump', 'Pump', 'P', 1),
+                    ('instrument', 'Instrument', 'T', 2),
+                    ('gas_inlet', 'Gas Inlet / Process Connection', 'G', 4);
+
+                INSERT INTO categories (id, family_id, name, subtype, actuation, port_count, symbol_id) VALUES
+                    ('gc_valve_manual_2way', 'valve', 'Manual 2-Way Valve', '2-way', 'manual', 2, NULL),
+                    ('gc_valve_manual_3way', 'valve', 'Manual 3-Way Valve', '3-way', 'manual', 3, NULL),
+                    ('gc_valve_auto_2way', 'valve', 'Solenoid 2-Way Valve', '2-way', 'automated', 2, 'sym_66c9fd54-5b6c-4416-a16f-d94d033d596f'),
+                    ('gc_valve_auto_3way', 'valve', 'Solenoid 3-Way Valve', '3-way', 'automated', 3, 'sym_68d5c85f-ba3e-49a4-9ff7-2089f77bd8b9'),
+                    ('gc_valve_check', 'valve', 'Check Valve', 'check', NULL, 2, 'sym_ec018f03-299f-4aa6-a4ae-03863c2248e6'),
+                    ('gc_valve_needle', 'valve', 'Needle Valve', 'needle', 'manual', 2, 'sym_04205f32-6f1f-43fb-b6d7-e69a3eb62d5b'),
+                    ('cat_f1920438-0c80-44d3-9eb8-30f403b31186', 'valve', 'Motor 2-Way Valve', NULL, '2', 2, 'sym_f2de43b7-048b-429f-87e4-d50a41ff6be2'),
+                    ('cat_5c214129-9cb4-4994-97de-23c32e62fd6c', 'valve', 'Motor 3-Way Valve', NULL, NULL, 2, 'sym_fcb8f595-35bd-4645-830c-e827a3402aeb'),
+                    ('cat_db7b11ad-cd35-4f8c-94ec-a3055778fe73', 'pump', 'Vacuum Pump', NULL, NULL, 2, 'sym_fcb61482-dda3-4dfb-adab-18dfc0eeed5a'),
+                    ('cat_6746bc57-c296-4394-a7c4-f0f98d2cd6f1', 'pump', 'Mixing Pump', NULL, NULL, 2, 'sym_0fd2d3a9-48c1-4fdd-b70c-d592dc56740c'),
+                    ('cat_2b4ca14c-d7dc-425f-9aed-c40afc0b228b', 'gas_inlet', 'Gas Inlet', NULL, NULL, 1, 'sym_ca2732fa-e9a7-438d-ada8-5e4559e77e97'),
+                    ('cat_1eeca241-8d0e-40a8-a0ed-ae8b9164e3e5', 'instrument', 'SPT', NULL, NULL, 1, 'sym_30d52ac5-98c8-418a-ae3b-4f6b8f3a013c'),
+                    ('cat_511898d9-4025-45a2-8148-6c224fbca33d', 'instrument', 'DPT', NULL, NULL, 1, 'sym_2e667701-bbc4-4c5d-81ae-ca220bad1e91'),
+                    ('cat_84ef2708-d84a-4e9b-9337-4b5222734314', 'instrument', 'HF Scrubber', NULL, NULL, 2, 'sym_f4f162c4-1400-454b-ada6-1b9a505fea84'),
+                    ('cat_c275b07f-dafa-4f99-92e4-d7789f082cd4', 'valve', 'Screw Valve', NULL, NULL, 2, 'sym_dc8dbfb8-afb2-46c0-a1fb-d22453aabe1e');
+
+                INSERT INTO symbols (id, geometry) VALUES
+                    ('sym_04205f32-6f1f-43fb-b6d7-e69a3eb62d5b', '{"points":{"center":{"x":0,"y":0},"lTop":{"x":-8,"y":-6},"lMid":{"x":-8,"y":0},"lBot":{"x":-8,"y":6},"lPort":{"x":-14,"y":0},"rTop":{"x":8,"y":6},"rMid":{"x":8,"y":0},"rBot":{"x":8,"y":-6},"rPort":{"x":14,"y":0},"p0":{"x":0,"y":-10},"p1":{"x":0,"y":10}},"lines":[["lTop","lMid"],["lMid","lBot"],["lBot","center"],["center","lTop"],["lMid","lPort"],["rTop","rMid"],["rMid","rBot"],["rBot","center"],["center","rTop"],["rMid","rPort"],["p0","p1"]],"arcs":[],"ports":["lPort","rPort"]}'),
+                    ('sym_0fd2d3a9-48c1-4fdd-b70c-d592dc56740c', '{"points":{"port0":{"x":-12,"y":0},"port1":{"x":12,"y":0},"p0":{"x":0,"y":-10},"p1":{"x":0,"y":10},"p2":{"x":-6,"y":-8},"p3":{"x":8,"y":-6},"p4":{"x":8,"y":6},"p5":{"x":-6,"y":8},"p6":{"x":-10,"y":0},"p7":{"x":10,"y":0}},"lines":[["p2","p3"],["p4","p5"],["port0","p6"],["port1","p7"]],"arcs":[{"a":"p0","b":"p1","bulge":1},{"a":"p1","b":"p0","bulge":1}],"ports":["port0","port1"],"texts":[{"x":0,"y":0,"text":"MP","size":10}]}'),
+                    ('sym_2e667701-bbc4-4c5d-81ae-ca220bad1e91', '{"points":{"p0":{"x":0,"y":-14},"p1":{"x":0,"y":14},"p2":{"x":14,"y":0},"p3":{"x":18,"y":0}},"lines":[["p2","p3"]],"arcs":[{"a":"p0","b":"p1","bulge":1},{"a":"p1","b":"p0","bulge":1}],"ports":["p3"],"texts":[{"x":0,"y":0,"text":"DPT","size":10}]}'),
+                    ('sym_30d52ac5-98c8-418a-ae3b-4f6b8f3a013c', '{"points":{"p0":{"x":0,"y":-14},"p1":{"x":0,"y":14},"p2":{"x":14,"y":0},"p3":{"x":18,"y":0}},"lines":[["p2","p3"]],"arcs":[{"a":"p0","b":"p1","bulge":1},{"a":"p1","b":"p0","bulge":1}],"ports":["p3"],"texts":[{"x":0,"y":0,"text":"SPT","size":10}]}'),
+                    ('sym_66c9fd54-5b6c-4416-a16f-d94d033d596f', '{"points":{"center":{"x":0,"y":0},"lTop":{"x":-8,"y":-6},"lMid":{"x":-8,"y":0},"lBot":{"x":-8,"y":6},"lPort":{"x":-14,"y":0},"rTop":{"x":8,"y":6},"rMid":{"x":8,"y":0},"rBot":{"x":8,"y":-6},"rPort":{"x":14,"y":0},"stemTop":{"x":0,"y":-12},"boxBL":{"x":-8,"y":-12},"boxBR":{"x":8,"y":-12},"boxTR":{"x":8,"y":-24},"boxTL":{"x":-8,"y":-24}},"lines":[["lTop","lMid"],["lMid","lBot"],["lBot","center"],["center","lTop"],["lMid","lPort"],["rTop","rMid"],["rMid","rBot"],["rBot","center"],["center","rTop"],["rMid","rPort"],["center","stemTop"],["boxBL","boxBR"],["boxBR","boxTR"],["boxTR","boxTL"],["boxTL","boxBL"]],"arcs":[],"ports":["lPort","rPort"],"texts":[{"x":0,"y":-18,"text":"S","size":10}]}'),
+                    ('sym_68d5c85f-ba3e-49a4-9ff7-2089f77bd8b9', '{"points":{"center":{"x":0,"y":0},"lTop":{"x":-8,"y":-6},"lMid":{"x":-8,"y":0},"lBot":{"x":-8,"y":6},"lPort":{"x":-14,"y":0},"rTop":{"x":8,"y":6},"rMid":{"x":8,"y":0},"rBot":{"x":8,"y":-6},"rPort":{"x":14,"y":0},"bTop":{"x":-6,"y":8},"bMid":{"x":0,"y":8},"bBot":{"x":6,"y":8},"bPort":{"x":0,"y":14},"stemTop":{"x":0,"y":-12},"boxBL":{"x":-8,"y":-12},"boxBR":{"x":8,"y":-12},"boxTR":{"x":8,"y":-24},"boxTL":{"x":-8,"y":-24}},"lines":[["lTop","lMid"],["lMid","lBot"],["lBot","center"],["center","lTop"],["lMid","lPort"],["rTop","rMid"],["rMid","rBot"],["rBot","center"],["center","rTop"],["rMid","rPort"],["bTop","bMid"],["bMid","bBot"],["bBot","center"],["center","bTop"],["bMid","bPort"],["center","stemTop"],["boxBL","boxBR"],["boxBR","boxTR"],["boxTR","boxTL"],["boxTL","boxBL"]],"arcs":[],"ports":["lPort","rPort","bPort"],"texts":[{"x":0,"y":-18,"text":"S","size":10}]}'),
+                    ('sym_ca2732fa-e9a7-438d-ada8-5e4559e77e97', '{"points":{"p0":{"x":0,"y":0},"p1":{"x":0,"y":-8},"p2":{"x":0,"y":8},"p3":{"x":0,"y":-4},"p4":{"x":0,"y":4}},"lines":[],"arcs":[{"a":"p1","b":"p2","bulge":1},{"a":"p2","b":"p1","bulge":1},{"a":"p3","b":"p4","bulge":1},{"a":"p4","b":"p3","bulge":1}],"ports":["p0"]}'),
+                    ('sym_dc8dbfb8-afb2-46c0-a1fb-d22453aabe1e', '{"points":{"p0":{"x":0,"y":-10},"p1":{"x":0,"y":10},"p2":{"x":-10,"y":10},"p3":{"x":10,"y":10},"p4":{"x":-10,"y":-10},"p5":{"x":10,"y":-10}},"lines":[["p0","p1"],["p2","p3"],["p4","p5"]],"arcs":[],"ports":["p1","p0"]}'),
+                    ('sym_ec018f03-299f-4aa6-a4ae-03863c2248e6', '{"points":{"portL":{"x":-14,"y":0},"baseMid":{"x":-6,"y":0},"tip":{"x":8,"y":0},"portR":{"x":14,"y":0},"p0":{"x":0,"y":-6},"p1":{"x":0,"y":6},"p2":{"x":0,"y":-10},"p3":{"x":0,"y":10}},"lines":[["portL","baseMid"],["tip","portR"],["tip","p2"],["tip","p3"]],"arcs":[{"a":"p0","b":"p1","bulge":1},{"a":"p1","b":"p0","bulge":1}],"ports":["portL","portR"]}'),
+                    ('sym_f2de43b7-048b-429f-87e4-d50a41ff6be2', '{"points":{"center":{"x":0,"y":0},"lTop":{"x":-8,"y":-6},"lMid":{"x":-8,"y":0},"lBot":{"x":-8,"y":6},"lPort":{"x":-14,"y":0},"rTop":{"x":8,"y":6},"rMid":{"x":8,"y":0},"rBot":{"x":8,"y":-6},"rPort":{"x":14,"y":0},"stemTop":{"x":0,"y":-12},"boxBL":{"x":-8,"y":-12},"boxBR":{"x":8,"y":-12},"boxTR":{"x":8,"y":-24},"boxTL":{"x":-8,"y":-24}},"lines":[["lTop","lMid"],["lMid","lBot"],["lBot","center"],["center","lTop"],["lMid","lPort"],["rTop","rMid"],["rMid","rBot"],["rBot","center"],["center","rTop"],["rMid","rPort"],["center","stemTop"],["boxBL","boxBR"],["boxBR","boxTR"],["boxTR","boxTL"],["boxTL","boxBL"]],"arcs":[],"ports":["lPort","rPort"],"texts":[{"x":0,"y":-18,"text":"M","size":10}]}'),
+                    ('sym_f4f162c4-1400-454b-ada6-1b9a505fea84', '{"points":{"p0":{"x":0,"y":-26},"p1":{"x":0,"y":26},"p2":{"x":-2,"y":-26},"p3":{"x":2,"y":-26},"p4":{"x":2,"y":-22},"p5":{"x":-2,"y":-22},"p6":{"x":-6,"y":-16},"p7":{"x":6,"y":-16},"p8":{"x":-2,"y":26},"p9":{"x":2,"y":26},"p10":{"x":2,"y":22},"p11":{"x":6,"y":16},"p12":{"x":-2,"y":22},"p13":{"x":-6,"y":16}},"lines":[["p2","p3"],["p3","p4"],["p2","p5"],["p5","p6"],["p4","p7"],["p8","p9"],["p9","p10"],["p10","p11"],["p8","p12"],["p12","p13"],["p13","p6"],["p7","p11"]],"arcs":[],"ports":["p0","p1"]}'),
+                    ('sym_fcb61482-dda3-4dfb-adab-18dfc0eeed5a', '{"points":{"port0":{"x":-12,"y":0},"port1":{"x":12,"y":0},"p0":{"x":0,"y":-10},"p1":{"x":0,"y":10},"p2":{"x":-6,"y":-8},"p3":{"x":8,"y":-6},"p4":{"x":8,"y":6},"p5":{"x":-6,"y":8},"p6":{"x":-10,"y":0},"p7":{"x":10,"y":0}},"lines":[["p2","p3"],["p4","p5"],["port0","p6"],["port1","p7"]],"arcs":[{"a":"p0","b":"p1","bulge":1},{"a":"p1","b":"p0","bulge":1}],"ports":["port0","port1"],"texts":[{"x":0,"y":0,"text":"VP","size":10}]}'),
+                    ('sym_fcb8f595-35bd-4645-830c-e827a3402aeb', '{"points":{"center":{"x":0,"y":0},"lTop":{"x":-8,"y":-6},"lMid":{"x":-8,"y":0},"lBot":{"x":-8,"y":6},"lPort":{"x":-14,"y":0},"rTop":{"x":8,"y":6},"rMid":{"x":8,"y":0},"rBot":{"x":8,"y":-6},"rPort":{"x":14,"y":0},"bTop":{"x":-6,"y":8},"bMid":{"x":0,"y":8},"bBot":{"x":6,"y":8},"bPort":{"x":0,"y":14},"stemTop":{"x":0,"y":-12},"boxBL":{"x":-8,"y":-12},"boxBR":{"x":8,"y":-12},"boxTR":{"x":8,"y":-24},"boxTL":{"x":-8,"y":-24}},"lines":[["lTop","lMid"],["lMid","lBot"],["lBot","center"],["center","lTop"],["lMid","lPort"],["rTop","rMid"],["rMid","rBot"],["rBot","center"],["center","rTop"],["rMid","rPort"],["bTop","bMid"],["bMid","bBot"],["bBot","center"],["center","bTop"],["bMid","bPort"],["center","stemTop"],["boxBL","boxBR"],["boxBR","boxTR"],["boxTR","boxTL"],["boxTL","boxBL"]],"arcs":[],"ports":["lPort","rPort","bPort"],"texts":[{"x":0,"y":-18,"text":"M","size":10}]}');
+
+                INSERT INTO attribute_definitions (id, category_id, key, label, type, unit, options, required, sort_order) VALUES
+                    ('gc_valve_auto_2way__cv', 'gc_valve_auto_2way', 'cv', 'Cv (Flow Coefficient)', 'number', NULL, NULL, 0, 0),
+                    ('gc_valve_auto_2way__pressure_rating', 'gc_valve_auto_2way', 'pressure_rating', 'Pressure Rating', 'text', NULL, NULL, 0, 1),
+                    ('gc_valve_auto_2way__port_size', 'gc_valve_auto_2way', 'port_size', 'Port Size', 'text', NULL, NULL, 0, 2),
+                    ('gc_valve_auto_2way__body_material', 'gc_valve_auto_2way', 'body_material', 'Body Material', 'text', NULL, NULL, 0, 3),
+                    ('gc_valve_auto_2way__seat_material', 'gc_valve_auto_2way', 'seat_material', 'Seat/Seal Material', 'text', NULL, NULL, 0, 4),
+                    ('gc_valve_auto_2way__connection_type', 'gc_valve_auto_2way', 'connection_type', 'Connection Type', 'select', NULL, '["Threaded","Flanged","Welded","Compression","Tri-Clamp"]', 0, 5),
+                    ('gc_valve_auto_2way__actuation_voltage', 'gc_valve_auto_2way', 'actuation_voltage', 'Actuation Voltage/Supply', 'text', NULL, NULL, 0, 6),
+                    ('gc_valve_auto_2way__fail_position', 'gc_valve_auto_2way', 'fail_position', 'Fail Position', 'select', NULL, '["FC","FO","FL","N/A"]', 0, 7),
+                    ('gc_valve_auto_3way__cv', 'gc_valve_auto_3way', 'cv', 'Cv (Flow Coefficient)', 'number', NULL, NULL, 0, 0),
+                    ('gc_valve_auto_3way__pressure_rating', 'gc_valve_auto_3way', 'pressure_rating', 'Pressure Rating', 'text', NULL, NULL, 0, 1),
+                    ('gc_valve_auto_3way__port_size', 'gc_valve_auto_3way', 'port_size', 'Port Size', 'text', NULL, NULL, 0, 2),
+                    ('gc_valve_auto_3way__body_material', 'gc_valve_auto_3way', 'body_material', 'Body Material', 'text', NULL, NULL, 0, 3),
+                    ('gc_valve_auto_3way__seat_material', 'gc_valve_auto_3way', 'seat_material', 'Seat/Seal Material', 'text', NULL, NULL, 0, 4),
+                    ('gc_valve_auto_3way__connection_type', 'gc_valve_auto_3way', 'connection_type', 'Connection Type', 'select', NULL, '["Threaded","Flanged","Welded","Compression","Tri-Clamp"]', 0, 5),
+                    ('gc_valve_auto_3way__actuation_voltage', 'gc_valve_auto_3way', 'actuation_voltage', 'Actuation Voltage/Supply', 'text', NULL, NULL, 0, 6),
+                    ('gc_valve_auto_3way__fail_position', 'gc_valve_auto_3way', 'fail_position', 'Fail Position', 'select', NULL, '["FC","FO","FL","N/A"]', 0, 7),
+                    ('gc_valve_check__cv', 'gc_valve_check', 'cv', 'Cv (Flow Coefficient)', 'number', NULL, NULL, 0, 0),
+                    ('gc_valve_check__pressure_rating', 'gc_valve_check', 'pressure_rating', 'Pressure Rating', 'text', NULL, NULL, 0, 1),
+                    ('gc_valve_check__port_size', 'gc_valve_check', 'port_size', 'Port Size', 'text', NULL, NULL, 0, 2),
+                    ('gc_valve_check__body_material', 'gc_valve_check', 'body_material', 'Body Material', 'text', NULL, NULL, 0, 3),
+                    ('gc_valve_check__seat_material', 'gc_valve_check', 'seat_material', 'Seat/Seal Material', 'text', NULL, NULL, 0, 4),
+                    ('gc_valve_check__connection_type', 'gc_valve_check', 'connection_type', 'Connection Type', 'select', NULL, '["Threaded","Flanged","Welded","Compression","Tri-Clamp"]', 0, 5),
+                    ('gc_valve_check__actuation_voltage', 'gc_valve_check', 'actuation_voltage', 'Actuation Voltage/Supply', 'text', NULL, NULL, 0, 6),
+                    ('gc_valve_check__fail_position', 'gc_valve_check', 'fail_position', 'Fail Position', 'select', NULL, '["FC","FO","FL","N/A"]', 0, 7),
+                    ('gc_valve_manual_2way__cv', 'gc_valve_manual_2way', 'cv', 'Cv (Flow Coefficient)', 'number', NULL, NULL, 0, 0),
+                    ('gc_valve_manual_2way__pressure_rating', 'gc_valve_manual_2way', 'pressure_rating', 'Pressure Rating', 'text', NULL, NULL, 0, 1),
+                    ('gc_valve_manual_2way__port_size', 'gc_valve_manual_2way', 'port_size', 'Port Size', 'text', NULL, NULL, 0, 2),
+                    ('gc_valve_manual_2way__body_material', 'gc_valve_manual_2way', 'body_material', 'Body Material', 'text', NULL, NULL, 0, 3),
+                    ('gc_valve_manual_2way__seat_material', 'gc_valve_manual_2way', 'seat_material', 'Seat/Seal Material', 'text', NULL, NULL, 0, 4),
+                    ('gc_valve_manual_2way__connection_type', 'gc_valve_manual_2way', 'connection_type', 'Connection Type', 'select', NULL, '["Threaded","Flanged","Welded","Compression","Tri-Clamp"]', 0, 5),
+                    ('gc_valve_manual_2way__actuation_voltage', 'gc_valve_manual_2way', 'actuation_voltage', 'Actuation Voltage/Supply', 'text', NULL, NULL, 0, 6),
+                    ('gc_valve_manual_2way__fail_position', 'gc_valve_manual_2way', 'fail_position', 'Fail Position', 'select', NULL, '["FC","FO","FL","N/A"]', 0, 7),
+                    ('gc_valve_manual_3way__cv', 'gc_valve_manual_3way', 'cv', 'Cv (Flow Coefficient)', 'number', NULL, NULL, 0, 0),
+                    ('gc_valve_manual_3way__pressure_rating', 'gc_valve_manual_3way', 'pressure_rating', 'Pressure Rating', 'text', NULL, NULL, 0, 1),
+                    ('gc_valve_manual_3way__port_size', 'gc_valve_manual_3way', 'port_size', 'Port Size', 'text', NULL, NULL, 0, 2),
+                    ('gc_valve_manual_3way__body_material', 'gc_valve_manual_3way', 'body_material', 'Body Material', 'text', NULL, NULL, 0, 3),
+                    ('gc_valve_manual_3way__seat_material', 'gc_valve_manual_3way', 'seat_material', 'Seat/Seal Material', 'text', NULL, NULL, 0, 4),
+                    ('gc_valve_manual_3way__connection_type', 'gc_valve_manual_3way', 'connection_type', 'Connection Type', 'select', NULL, '["Threaded","Flanged","Welded","Compression","Tri-Clamp"]', 0, 5),
+                    ('gc_valve_manual_3way__actuation_voltage', 'gc_valve_manual_3way', 'actuation_voltage', 'Actuation Voltage/Supply', 'text', NULL, NULL, 0, 6),
+                    ('gc_valve_manual_3way__fail_position', 'gc_valve_manual_3way', 'fail_position', 'Fail Position', 'select', NULL, '["FC","FO","FL","N/A"]', 0, 7),
+                    ('gc_valve_needle__cv', 'gc_valve_needle', 'cv', 'Cv (Flow Coefficient)', 'number', NULL, NULL, 0, 0),
+                    ('gc_valve_needle__pressure_rating', 'gc_valve_needle', 'pressure_rating', 'Pressure Rating', 'text', NULL, NULL, 0, 1),
+                    ('gc_valve_needle__port_size', 'gc_valve_needle', 'port_size', 'Port Size', 'text', NULL, NULL, 0, 2),
+                    ('gc_valve_needle__body_material', 'gc_valve_needle', 'body_material', 'Body Material', 'text', NULL, NULL, 0, 3),
+                    ('gc_valve_needle__seat_material', 'gc_valve_needle', 'seat_material', 'Seat/Seal Material', 'text', NULL, NULL, 0, 4),
+                    ('gc_valve_needle__connection_type', 'gc_valve_needle', 'connection_type', 'Connection Type', 'select', NULL, '["Threaded","Flanged","Welded","Compression","Tri-Clamp"]', 0, 5),
+                    ('gc_valve_needle__actuation_voltage', 'gc_valve_needle', 'actuation_voltage', 'Actuation Voltage/Supply', 'text', NULL, NULL, 0, 6),
+                    ('gc_valve_needle__fail_position', 'gc_valve_needle', 'fail_position', 'Fail Position', 'select', NULL, '["FC","FO","FL","N/A"]', 0, 7);
+            "#,
+        },
     ]
 }
 
