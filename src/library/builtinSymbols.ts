@@ -1,7 +1,6 @@
 /**
- * Hand-built vector symbols for the seeded valve categories, drawn from
- * `reference/basicSymbols.jpg` (ISA-style bow-tie valve bodies + actuator glyphs),
- * plus the generic N-port placeholder used as a fallback for categories that don't
+ * Hand-built vector symbols for the seeded valve categories (ISA-style bow-tie valve bodies
+ * and actuator glyphs), plus the generic N-port placeholder used as a fallback for categories that don't
  * have a specific symbol yet (Pump, Instrument, Fitting, Gas Inlet, and any new valve
  * subtype/actuation combination added later). Both kinds are just values of the same
  * `SymbolGeometry` type — `resolveSymbol` is the only thing callers need.
@@ -181,7 +180,7 @@ function placeholderPortLayout(portCount: number): Vec2[] {
 /** Generic fallback: a square outline with `portCount` ports laid out inside it (same
  * look the app had before real symbols existed) — used for any category that doesn't
  * have a hand-built symbol yet. */
-export function generatePlaceholderSymbol(portCount: number): SymbolGeometry {
+function generatePlaceholderSymbol(portCount: number): SymbolGeometry {
   const s = newSymbol();
   pt(s, 'tl', -HALF_EXTENT, -HALF_EXTENT);
   pt(s, 'tr', HALF_EXTENT, -HALF_EXTENT);

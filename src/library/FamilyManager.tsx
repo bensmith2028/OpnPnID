@@ -6,7 +6,7 @@ import { describeError } from './errors';
  * single uppercase character, or null for "no default letter" (families like Instrument,
  * where the letter varies by category). Shared by the Add Family form and the inline
  * per-row box so both coerce identically. */
-export function normalizeTagLetter(raw: string): string | null {
+function normalizeTagLetter(raw: string): string | null {
   return raw.trim().toUpperCase().slice(0, 1) || null;
 }
 

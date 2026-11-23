@@ -1,8 +1,8 @@
 import { useEffect } from 'react';
 import { SketchCanvas } from './canvas/SketchCanvas';
+import { LibraryPanel } from './library/LibraryPanel';
 import { useSketchStore } from './canvas/store/useSketchStore';
 import { PropertiesPopup } from './ui/PropertiesPopup';
-import { SidePanel } from './ui/SidePanel';
 import { Toaster } from './ui/Toaster';
 import { ToolRail } from './ui/ToolRail';
 import { TopBar } from './ui/Toolbar';
@@ -37,7 +37,10 @@ export default function App() {
         <ToolRail />
         <SketchCanvas />
         <PropertiesPopup />
-        <SidePanel />
+        {/* The Library is the whole sidebar; what you click on the canvas gets a popup (PropertiesPopup). */}
+        <div className="side-panel">
+          <LibraryPanel />
+        </div>
       </div>
       <Toaster />
       {pendingGuardedAction && <UnsavedChangesDialog action={pendingGuardedAction} />}

@@ -1,10 +1,6 @@
 /** Pure vector-math helpers. Framework-free and unit-testable in isolation. */
 import type { Vec2 } from '../types/geometry';
 
-export function vec(x: number, y: number): Vec2 {
-  return { x, y };
-}
-
 export function add(a: Vec2, b: Vec2): Vec2 {
   return { x: a.x + b.x, y: a.y + b.y };
 }
@@ -80,11 +76,6 @@ export function normalizeAngle(angleRad: number): number {
   if (a > Math.PI) a -= Math.PI * 2;
   if (a <= -Math.PI) a += Math.PI * 2;
   return a;
-}
-
-/** Smallest absolute difference between two angles, result in [0, PI]. */
-export function angleDelta(a: number, b: number): number {
-  return Math.abs(normalizeAngle(a - b));
 }
 
 export function nearestGridPoint(p: Vec2, gridSize: number): Vec2 {

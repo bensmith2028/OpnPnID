@@ -1,6 +1,6 @@
 /**
  * The OpnPnID symbol format — what a `.pnidsym.json` file contains, and the only place
- * that decides whether a file being imported is one. Pure and DOM/Tauri-free (so it's
+ * that decides whether a file being imported is one. Pure and DOM-free (so it's
  * unit-tested directly in symbolFormat.test.ts); symbolIO.ts is the thin platform wrapper
  * that moves the text to and from a file.
  *

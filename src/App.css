@@ -295,58 +295,6 @@ body {
   border-color: var(--accent);
 }
 
-.component-specs {
-  list-style: none;
-  margin: 6px 0;
-  padding: 8px;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  font-size: 12px;
-}
-
-.component-specs li {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 2px 0;
-  color: var(--text);
-}
-
-.component-specs li span:first-child {
-  color: var(--text-muted);
-}
-
-.component-part-list {
-  list-style: none;
-  margin: 6px 0;
-  padding: 0;
-  max-height: 180px;
-  overflow-y: auto;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-}
-
-.component-part-list li button {
-  width: 100%;
-  text-align: left;
-  background: transparent;
-  color: var(--text);
-  border: none;
-  border-bottom: 1px solid var(--border);
-  padding: 6px 8px;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.component-part-list li:last-child button {
-  border-bottom: none;
-}
-
-.component-part-list li button:hover {
-  background: var(--bg-button-hover);
-}
-
 /* ---------------------------------------------------------------------------------
    Library panel
    --------------------------------------------------------------------------------- */
@@ -373,11 +321,6 @@ body {
   color: var(--text-muted);
 }
 
-.library-header-buttons {
-  display: flex;
-  gap: 4px;
-}
-
 .library-header button {
   background: var(--bg-button);
   color: var(--text);
@@ -389,54 +332,6 @@ body {
 }
 
 .library-header button.active {
-  background: var(--accent);
-  color: var(--accent-contrast);
-  border-color: var(--accent);
-}
-
-.library-sync-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.library-sync-row button {
-  background: var(--bg-button);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 4px 8px;
-  font-size: 11px;
-  cursor: pointer;
-  flex-shrink: 0;
-}
-
-.library-sync-path {
-  flex: 1 1 auto;
-  min-width: 40px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.library-category-tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.library-category-tabs button {
-  background: var(--bg-button);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 4px 8px;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.library-category-tabs button.active {
   background: var(--accent);
   color: var(--accent-contrast);
   border-color: var(--accent);
@@ -457,44 +352,10 @@ body {
   gap: 4px;
 }
 
-.library-list--compact {
-  gap: 2px;
-}
-
 .library-list > li {
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 4px;
-}
-
-.library-list--compact li {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 4px;
-  border: none;
-  border-bottom: 1px solid var(--border);
-  padding: 4px 2px;
-  font-size: 12px;
-  color: var(--text);
-}
-
-.library-list--compact li:last-child {
-  border-bottom: none;
-}
-
-/* The label sits in its own shrinkable/truncatable box so a long manufacturer/model
-   string wraps its row's action buttons onto the next line instead of forcing the whole
-   panel to scroll horizontally. */
-.library-list--compact li > span {
-  min-width: 0;
-  overflow-wrap: break-word;
-}
-
-.library-list--compact li > div {
-  display: flex;
-  gap: 4px;
-  flex-shrink: 0;
 }
 
 .library-list-row {
@@ -518,9 +379,8 @@ body {
   white-space: nowrap;
 }
 
-/* Rename box on a category or family row — same footprint as the name button/label it
-   replaces in edit mode, but reading as an editable field rather than a link. (A family
-   row's tag-letter box adds .library-tag-letter-input on top, for its narrow footprint.) */
+/* Rename box on a family row, reading as an editable field. (The tag-letter box adds
+   .library-tag-letter-input on top, for its narrow footprint.) */
 .library-list-name--input {
   background: var(--bg-input);
   border: 1px solid var(--border);
@@ -538,8 +398,7 @@ body {
   font-size: 11px;
 }
 
-.library-list-row button,
-.library-list--compact li button {
+.library-list-row button {
   background: var(--bg-button);
   color: var(--text);
   border: 1px solid var(--border);
@@ -551,8 +410,7 @@ body {
   flex-shrink: 0;
 }
 
-.library-list-row button:hover,
-.library-list--compact li button:hover {
+.library-list-row button:hover {
   background: var(--bg-button-hover);
 }
 
@@ -609,53 +467,8 @@ body {
   min-width: 0 !important;
 }
 
-.library-attributes,
-.library-real-parts {
-  margin-top: 6px;
-  padding-top: 6px;
-  border-top: 1px dashed var(--border);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.library-csv-row {
-  display: flex;
-  gap: 4px;
-}
-
-.library-csv-row button {
-  background: var(--bg-button);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 5px 8px;
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.library-import-result {
-  font-size: 11px;
-  color: var(--text-muted);
-  margin: 0;
-}
-
-.library-spec-checkbox {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--text);
-  flex: 1;
-  min-width: 90px;
-}
-
-.library-spec-checkbox input[type='checkbox'] {
-  accent-color: var(--accent);
-}
-
 /* ---------------------------------------------------------------------------------
-   Real hardware modal — pop-up for assigning a real part to a placed component
+   Dialogs
    --------------------------------------------------------------------------------- */
 
 .modal-backdrop {
@@ -678,17 +491,6 @@ body {
   max-height: calc(100vh - 64px);
   overflow-y: auto;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-}
-
-.real-hardware-modal .library-header {
-  margin-bottom: 12px;
-}
-
-.real-hardware-modal .library-header h3 {
-  text-transform: none;
-  font-size: 15px;
-  letter-spacing: normal;
-  color: var(--text);
 }
 
 /* ---------------------------------------------------------------------------------
@@ -720,69 +522,6 @@ body {
   margin: 6px 0 0;
 }
 
-.symbol-editor-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-bottom: 8px;
-  /* Five tool buttons plus the two action buttons can outgrow the panel on narrow
-     rendering; wrapping keeps them all reachable instead of clipping the last one. */
-  flex-wrap: wrap;
-}
-
-.symbol-editor-toolbar-gap {
-  flex: 1;
-}
-
-.symbol-editor-toolbar button {
-  background: var(--bg-button);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 4px 9px;
-  font-size: 11px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.symbol-editor-toolbar button:hover:not(:disabled) {
-  background: var(--bg-button-hover);
-}
-
-.symbol-editor-toolbar button.active {
-  background: var(--accent);
-  color: var(--accent-contrast);
-  border-color: var(--accent);
-}
-
-.symbol-editor-toolbar button:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-
-/* The Text tool's size option. Laid out on one line (label beside field, unlike the image
-   tab's stacked width/height) so it takes no more vertical room than the tool buttons it
-   shares the row with. */
-.symbol-editor-text-size {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  margin-left: 6px;
-  font-size: 11px;
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
-.symbol-editor-text-size input[type='number'] {
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  color: var(--text);
-  padding: 4px 6px;
-  font-size: 11px;
-  width: 58px;
-}
-
 /* Anchors the inline label editor over the drawing canvas — see .canvas-text-editor. */
 .symbol-editor-canvas-wrap {
   position: relative;
@@ -794,31 +533,6 @@ body {
   border-radius: 4px;
   touch-action: none;
   cursor: crosshair;
-}
-
-.symbol-editor-size-row {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-
-.symbol-editor-size-row label {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-.symbol-editor-size-row input[type='number'] {
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  color: var(--text);
-  padding: 5px 6px;
-  font-size: 12px;
-  width: 90px;
 }
 
 .symbol-editor-footer {
@@ -1024,7 +738,7 @@ body {
 }
 
 /* ---------------------------------------------------------------------------------
-   Sidebar tabs (Properties | Library)
+   Sidebar (the Library)
    --------------------------------------------------------------------------------- */
 .side-panel {
   width: 320px;
@@ -1036,36 +750,8 @@ body {
   border-left: 1px solid var(--border);
 }
 
-.side-tabs {
-  display: flex;
-  flex-shrink: 0;
-  border-bottom: 1px solid var(--border);
-}
-
-.side-tabs button {
-  flex: 1;
-  padding: 10px 0;
-  background: transparent;
-  color: var(--text-muted);
-  border: none;
-  border-bottom: 2px solid transparent;
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.side-tabs button:hover {
-  color: var(--text);
-}
-
-.side-tabs button.active {
-  color: var(--text);
-  border-bottom-color: var(--accent);
-  font-weight: 600;
-}
-
 /* Browsing the library: a component name is a plain full-width list item that lights up on
-   hover, not a bordered box (which read as an editable text field). In Edit mode the same
-   slot becomes a real input (.library-list-name--input). */
+   hover, not a bordered box (which would read as an editable text field). */
 .library-list-row button.library-list-name {
   flex: 1 1 auto;
   padding: 7px 8px;
@@ -1139,26 +825,6 @@ body {
   color: var(--text);
   background: var(--bg-button-hover);
   border-color: var(--border);
-}
-
-.library-category-tabs {
-  align-items: center;
-}
-
-.library-category-tabs .library-gear {
-  display: inline-flex;
-  align-items: center;
-  padding: 4px 6px;
-  margin-left: auto;
-  background: transparent;
-  color: var(--text-muted);
-  border-color: transparent;
-}
-
-.library-category-tabs .library-gear:hover,
-.library-category-tabs .library-gear.active {
-  color: var(--text);
-  background: var(--bg-button-hover);
 }
 
 .library-new,
@@ -1248,7 +914,6 @@ body {
   border-left-color: var(--error);
 }
 
-
 /* Line weight control (Properties panels) */
 .weight-row {
   display: flex;
@@ -1261,16 +926,11 @@ body {
   flex: 0 0 auto;
 }
 
-
 /* Edit view: canvas on the left, Properties on the right */
 .symbol-editor-body {
   display: flex;
   gap: 14px;
   align-items: flex-start;
-}
-
-.symbol-editor-main {
-  flex: 0 0 auto;
 }
 
 .symbol-props {
@@ -1288,25 +948,6 @@ body {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 
-/* The one destructive action for the whole component, kept apart from everything else at the
-   bottom of the column, and quiet until hovered. */
-.symbol-props-delete {
-  margin-top: auto;
-  align-self: flex-start;
-  padding: 4px 0;
-  background: transparent;
-  border: none;
-  color: var(--error);
-  font-size: 12px;
-  cursor: pointer;
-  opacity: 0.8;
-}
-
-.symbol-props-delete:hover:not(:disabled) {
-  opacity: 1;
-  text-decoration: underline;
-}
-
 .symbol-props h3 {
   margin: 0 0 8px;
   font-size: 12px;
@@ -1315,8 +956,7 @@ body {
   color: var(--text-muted);
 }
 
-.symbol-props-summary,
-.symbol-props-ports {
+.symbol-props-summary {
   margin: 0 0 12px;
   font-size: 12px;
   color: var(--text-muted);
@@ -1332,15 +972,6 @@ body {
   font-size: 12px;
   cursor: pointer;
   margin-bottom: 12px;
-}
-
-.symbol-editor-placeholder {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px dashed var(--border);
-  color: var(--text-muted);
-  font-size: 13px;
 }
 
 .symbol-editor-family {
@@ -1366,20 +997,6 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-}
-
-.library-link {
-  background: transparent;
-  border: none;
-  color: var(--text-muted);
-  font-size: 12px;
-  cursor: pointer;
-  padding: 2px 0;
-}
-
-.library-link:hover:not(:disabled) {
-  color: var(--text);
-  text-decoration: underline;
 }
 
 .library-toolbar .library-gear {
@@ -1456,7 +1073,7 @@ body {
   padding: 6px 0 4px;
 }
 
-/* Library is now the whole sidebar (no tabs), and Properties is a popup beside it */
+/* The Library is the whole sidebar; Properties is a popup beside it */
 .side-panel {
   overflow: hidden;
 }

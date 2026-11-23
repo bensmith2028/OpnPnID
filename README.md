@@ -1,48 +1,44 @@
 # OpnPnID
 
 A P&ID (piping & instrumentation diagram) editor that is **a single HTML file**. Double-click
-it and it opens in your browser — no install, no account, no server, no internet, nothing
-to host or keep running. Keep the file and it works indefinitely. Draw schematics on a
-snapping canvas from a library of general components, then export to PDF or a
-bill-of-materials CSV.
+`OpnPnID.html` and it opens in your browser — no install, no account, no server, no internet,
+nothing to host or keep running. Keep the file and it works indefinitely.
+
+Draw schematics on a snapping canvas from a library of components, record the specific hardware
+each one is, and export to PDF or a parts list.
 
 ## Using it
 
-Open `OpnPnID.html` (it's in this repo, prebuilt) in Chrome, Edge, Firefox or Safari and
-start drawing. The library comes pre-loaded with valves, pumps and instruments.
+Open `OpnPnID.html` in Chrome, Edge, Firefox or Safari.
 
-1. Click **Library**, pick a component, and click the canvas to place it. Click again to
-   place more.
+1. Open a family in the **Library** (right) and click a component, then click the canvas to place it.
 2. Draw pipes with the **Line** and **Arc** tools; they snap to component ports.
-3. **Save** downloads your drawing as a `.pnid.json` file; **Open** loads one back.
-   **Export PDF** and **Export BOM** download those too.
+3. Click anything to see its **properties** in a popup: tag, name, rotation (**R** turns a component
+   45°), line weight, and its **hardware** (name and free-text notes — hover a component to see them).
+4. **File ▸ Save As…** keeps the drawing as a `.pnid.json` file; **File ▸ Open…** loads one back.
+   Export a PDF or a parts list (every component, or counts) from the same menu.
 
-Your library is stored in your browser, so it's there next time. Drawings are *not* — save
-them as files, and the page will warn you before you close it with unsaved work. A drawing carries a copy of every component it uses,
-so it opens correctly anywhere, even with a different library.
+The empty canvas shows a **Controls** tab listing every keyboard and mouse shortcut.
 
-## Components and sharing
+## Components and the hardware catalog
 
-A component is a name, a drawing, and the points where pipes connect. In the Library
-panel:
+A component is a name, a drawing, and numbered connection ports. The pencil on each Library row
+opens its edit view: redraw it, rename it, move it to another family, or delete it.
 
-- **Edit** reveals rename, **✎ Edit Drawing** (draw a symbol or upload an image, then mark
-  its connection ports), **⤓ Export** and delete.
-- **Export All** saves your whole library; **⤓** on a row saves just that component. Both
-  write a `.pnidlib.json` file.
-- **Import…** adds the components from someone else's file. **It never replaces anything
-  you have:** components you already have are skipped, and one that shares a name with a
-  different drawing arrives as "Name (2)".
-- **Reset** (in Edit mode) goes back to the built-in default library.
+- **Hardware catalog** — the **Catalog** button in the top bar lists every saved piece of hardware
+  (a name plus notes such as "Viton seals, 24 VDC"), where each can be edited or deleted.
+- **Sharing** — **File ▸ Export all components…** saves your components, with their hardware, to a
+  `.pnidlib.json` file; **File ▸ Import components…** adds someone else's. Importing only ever adds:
+  nothing you already have is replaced, and a name clash arrives as "Name (2)".
 
-The library lives in the browser's own storage, not in the file. Clearing site data — or, in
-some browsers, opening the HTML file from a different folder or browser — starts you on the
-default library again. So **Export All now and then** as your backup; it's a file you keep,
-and Import puts it back.
+The library lives in the browser's own storage, not in the HTML file, so clearing site data (or, in
+some browsers, opening the file from another folder or browser) brings back the default library.
+**Export all components now and then** as your backup. Drawings are never stored in the browser —
+save them as files; the page warns you before you close it with unsaved work.
 
 ## Rebuilding the file
 
-`OpnPnID.html` in the repo root is a prebuilt copy. If you change the code, rebuild it:
+`OpnPnID.html` is a prebuilt copy. After changing the code:
 
 ```bash
 npm install
@@ -50,28 +46,13 @@ npm run build                      # produces dist/index.html
 cp dist/index.html OpnPnID.html    # refresh the prebuilt copy
 ```
 
-That one file is the whole app: put it anywhere or hand it to someone. It has no
-dependencies on this repo, a network, or any server. You only need Node to *build* it or
-to work on the code:
-
-```bash
-npm run dev      # development server with hot reload
-npm test
-```
-
-Built with React, TypeScript, Zustand and Vite; `vite-plugin-singlefile` inlines everything
-into the one HTML file.
+`npm run dev` runs a development server with hot reload. Built with React, TypeScript, Zustand and
+Vite; `vite-plugin-singlefile` inlines everything into the one HTML file.
 
 ```
 src/
-  canvas/     scene graph, drawing tools, canvas + Zustand store
-  library/    component library (in-browser store), symbol editor, default library
-  io/         PDF / BOM / drawing / symbol / library files
-  ui/         toolbar, properties panel, dialogs
+  canvas/    scene graph, drawing tools, canvas, store
+  library/   component library (in-browser storage), symbol editor, hardware catalog
+  io/        PDF, parts list, drawing, symbol and library files
+  ui/        top bar, properties, dialogs
 ```
-
-File formats (`src/io/`): drawings `.pnid.json`, single symbols `.pnidsym.json`, libraries
-and shared components `.pnidlib.json`. All are plain JSON with a schema `version`; newer
-versions are refused with a clear message rather than half-loaded.
-
-The default library is `src/library/defaultLibrary.json`.

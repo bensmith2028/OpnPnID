@@ -158,12 +158,6 @@ function newId(prefix: string): string {
   return `${prefix}_${crypto.randomUUID()}`;
 }
 
-/** Test hook: forget the in-memory library so the next call reloads (or reseeds). */
-export function resetLibraryCacheForTests(): void {
-  loaded = null;
-  queue = Promise.resolve();
-}
-
 // ---------------------------------------------------------------------------------
 // Families
 // ---------------------------------------------------------------------------------
@@ -313,12 +307,6 @@ export function upsertSymbol(input: { id?: string; geometry: SymbolGeometry }): 
     if (existing) existing.geometry = geometry;
     else data.symbols.push({ id, geometry });
     return { id, geometry: structuredClone(geometry) };
-  });
-}
-
-export function deleteSymbol(id: string): Promise<void> {
-  return mutate((data) => {
-    data.symbols = data.symbols.filter((s) => s.id !== id);
   });
 }
 

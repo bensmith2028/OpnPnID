@@ -879,7 +879,7 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cancelPending]);
 
-  // Scoped key handling, same pattern as RealHardwareModal. This is a full lockout, not a
+  // Scoped key handling, same pattern as the app's other dialogs. This is a full lockout, not a
   // filter: while the modal is open EVERY keystroke is stopped in the capture phase so
   // SketchCanvas's global handler can't switch tools or delete geometry behind it. Typing
   // in a text field is the one exemption — those keys are the field's, not the editor's.
@@ -1561,19 +1561,3 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
     </div>
   );
 }
-
-export {
-  circleArcEndpoints,
-  clampTextSize,
-  DEFAULT_TEXT_SIZE,
-  graphToGeometry,
-  localToScreen,
-  MAX_TEXT_SIZE,
-  MIN_TEXT_SIZE,
-  normalizeRect,
-  pointInRect,
-  populateGraph,
-  screenToLocal,
-  selectInsideRect,
-  selectionPointIds,
-};

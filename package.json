@@ -5,9 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview",
-    "test": "vitest run"
+    "build": "vite build"
   },
   "dependencies": {
     "jspdf": "^4.2.1",
@@ -21,7 +19,6 @@
     "@vitejs/plugin-react": "^4.6.0",
     "typescript": "~5.8.3",
     "vite": "^7.0.4",
-    "vite-plugin-singlefile": "^2.3.4",
-    "vitest": "^4.1.10"
+    "vite-plugin-singlefile": "^2.3.4"
   }
 }

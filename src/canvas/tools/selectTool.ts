@@ -589,13 +589,3 @@ export function componentLabelAtWorld(world: Vec2): { instance: ComponentInstanc
   return hitTestComponentLabel(world, worldThreshold());
 }
 
-export function selectHitTestForCursor(world: Vec2): 'point' | 'line' | 'arc' | 'text' | 'label' | 'component' | null {
-  const threshold = worldThreshold();
-  const point = hitTestPoint(world, threshold);
-  if (point) return 'point';
-  if (hitTestText(world, threshold)) return 'text';
-  if (hitTestComponentLabel(world, threshold)) return 'label';
-  if (hitTestComponent(world, threshold)) return 'component';
-  const hit = hitTestEdge(world, threshold);
-  return hit?.kind ?? null;
-}

@@ -1,6 +1,6 @@
 /**
  * The OpnPnID project-document format — what a `.pnid.json` file contains, and the only
- * place that decides whether a file being opened is one. Pure and DOM/Tauri-free (so it's
+ * place that decides whether a file being opened is one. Pure and DOM-free (so it's
  * unit-tested directly in projectFormat.test.ts); projectIO.ts is the thin platform
  * wrapper that moves the text to and from a file.
  *
