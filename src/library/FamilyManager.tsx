@@ -12,10 +12,9 @@ export function normalizeTagLetter(raw: string): string | null {
 
 /** Family list + add form — a loose grouping (Valve, Pump, Instrument, ...) used only
  * for browsing and the ISA-lite tag-letter default. Families own no symbol logic of
- * their own; that all lives on the components inside them (see CategoryForm).
- * `editMode` gates the Delete button and the inline edit boxes (see LibraryPanel's Edit
- * toggle). */
-export function FamilyManager({ families, onChange, editMode }: { families: db.Family[]; onChange: () => void; editMode: boolean }) {
+ * their own; that all lives on the components inside them (see CategoryForm). Every field
+ * is editable in place. */
+export function FamilyManager({ families, onChange }: { families: db.Family[]; onChange: () => void }) {
   const [newName, setNewName] = useState('');
   const [newLetter, setNewLetter] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -66,29 +65,16 @@ export function FamilyManager({ families, onChange, editMode }: { families: db.F
         {families.map((f) => (
           <li key={f.id}>
             <div className="library-list-row">
-              {/* Browsing shows the family as plain text; in edit mode both of its fields
-                  become text boxes so they can be corrected in place — otherwise fixing a
-                  typo means deleting the family, which removes every component inside
-                  it. */}
-              {editMode ? (
-                <>
-                  <FamilyNameInput family={f} onRename={(name) => void updateFamily(f, { name })} />
-                  <FamilyTagLetterInput family={f} onRetag={(tagLetter) => void updateFamily(f, { tagLetter })} />
-                </>
-              ) : (
-                <span className="library-list-name">
-                  {f.name} {f.tagLetter ? <span className="library-muted">({f.tagLetter})</span> : null}
-                </span>
-              )}
-              {editMode && (
-                <button
-                  className="library-icon-button library-icon-button--danger"
-                  onClick={() => void removeFamily(f.id, f.name)}
-                  title="Delete family — deletes the family and everything in it"
-                >
-                  🗑
-                </button>
-              )}
+              <FamilyNameInput family={f} onRename={(name) => void updateFamily(f, { name })} />
+              <FamilyTagLetterInput family={f} onRetag={(tagLetter) => void updateFamily(f, { tagLetter })} />
+              <button
+                className="library-icon-button library-icon-button--danger"
+                onClick={() => void removeFamily(f.id, f.name)}
+                title="Delete family — deletes the family and everything in it"
+                aria-label={`Delete ${f.name}`}
+              >
+                🗑
+              </button>
             </div>
           </li>
         ))}

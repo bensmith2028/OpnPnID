@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { SketchCanvas } from './canvas/SketchCanvas';
 import { useSketchStore } from './canvas/store/useSketchStore';
 import { SidePanel } from './ui/SidePanel';
+import { Toaster } from './ui/Toaster';
 import { ToolRail } from './ui/ToolRail';
 import { TopBar } from './ui/Toolbar';
 import { UnsavedChangesDialog } from './ui/UnsavedChangesDialog';
@@ -36,6 +37,7 @@ export default function App() {
         <SketchCanvas />
         <SidePanel />
       </div>
+      <Toaster />
       {pendingGuardedAction && <UnsavedChangesDialog action={pendingGuardedAction} />}
     </div>
   );

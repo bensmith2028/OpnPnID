@@ -420,7 +420,7 @@ export function SketchCanvas() {
               Pick the <strong>Line</strong> tool and drag between ports to connect them
             </li>
           </ol>
-          <p>Use File ▸ Save to keep your drawing as a file.</p>
+          <p>Use File ▸ Save As… to keep your drawing as a file.</p>
         </div>
       )}
       {armedCategoryId && armedName && (

@@ -1,12 +1,12 @@
 /**
  * Getting the project document (see projectFormat.ts for the format) to and from a file:
- * saving is a download, opening is a file picker. A drawing carries a snapshot of every
+ * saving asks where to put the file, opening is a file picker. A drawing carries a snapshot of every
  * component it uses, so it opens in any other copy of the app, with or without the same
  * component library.
  */
 import { useSketchStore } from '../canvas/store/useSketchStore';
 import type { ProjectFile } from '../types/geometry';
-import { downloadText, pickFile } from './fileTransfer';
+import { pickFile, saveTextAs } from './fileTransfer';
 import { DEFAULT_PROJECT_FILENAME, parseProjectFile, serializeProject } from './projectFormat';
 
 /** The file picker's filter — `.pnid.json` files are `.json` files, and the format's own
@@ -36,15 +36,17 @@ function applyProject(file: ProjectFile, name: string): void {
   store.markSaved();
 }
 
-/** Downloads the current drawing as a project file. A browser can't write back to a path it
- * opened from, so Save and Save As are the same action: a fresh download. */
+/** Save As: asks where to put the drawing and what to call it, then writes it. A cancelled
+ * dialog changes nothing — the drawing stays "unsaved". */
 export async function saveProjectAs(): Promise<void> {
-  const name = suggestedFileName();
-  downloadText(name, serializeCurrentProject());
-  useSketchStore.getState().setFilePath(name);
+  const saved = await saveTextAs(suggestedFileName(), serializeCurrentProject());
+  if (!saved) return;
+  useSketchStore.getState().setFilePath(saved);
   useSketchStore.getState().markSaved();
 }
 
+/** What the unsaved-changes prompt's Save button and Cmd/Ctrl+S call. Always Save As: a
+ * browser can't quietly write back to a file it opened, so each save asks where to put it. */
 export const saveProject = saveProjectAs;
 
 /** Opens a project file, replacing the current drawing. Throws (for the caller to surface)

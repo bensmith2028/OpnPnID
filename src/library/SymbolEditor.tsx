@@ -30,6 +30,7 @@ import {
 import { SceneGraph } from '../canvas/sceneGraph';
 import { computeSnap, type SnapOptions, type SnapResult } from '../canvas/snapping';
 import { SYMBOL_FILE_EXTENSION } from '../io/symbolFormat';
+import { shareComponent } from '../io/libraryIO';
 import { exportSymbol, importSymbol } from '../io/symbolIO';
 import type { Id, SceneGraphJSON, SymbolGeometry, Vec2 } from '../types/geometry';
 import { resolveSymbol } from './builtinSymbols';
@@ -494,6 +495,8 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
   const graph = (graphRef.current ??= new SceneGraph());
 
   const [tab, setTab] = useState<EditorTab>('draw');
+  /** The component's name, editable in the header and saved along with the drawing. */
+  const [nameText, setNameText] = useState(category.name);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1321,7 +1324,7 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
     setSaving(true);
     try {
       const stored = await db.upsertSymbol({ id: category.symbolId ?? undefined, geometry });
-      await db.upsertCategory({ ...category, symbolId: stored.id });
+      await db.upsertCategory({ ...category, name: nameText.trim() || category.name, symbolId: stored.id });
       setSaving(false);
       onSaved();
       onClose();
@@ -1360,6 +1363,32 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
   const saveSymbol = () => {
     const geometry = currentGeometry();
     return geometry ? persist(geometry) : Promise.resolve();
+  };
+
+  /** Shares the whole component as a library file — what's on screen, unsaved edits included. */
+  const runShare = async () => {
+    setError(null);
+    setNotice(null);
+    const geometry = currentGeometry();
+    if (!geometry) return;
+    try {
+      await shareComponent({ ...category, name: nameText.trim() || category.name }, geometry);
+      setNotice('Saved a component file you can send to someone.');
+    } catch (e) {
+      setError(describeError(e));
+    }
+  };
+
+  const runDelete = async () => {
+    if (!window.confirm(`Delete "${category.name}" and its drawing from your library? Drawings that already use it keep their own copy. This can't be undone.`)) return;
+    setError(null);
+    try {
+      await db.deleteCategory(category.id);
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError(describeError(e));
+    }
   };
 
   // ------------------------------------------------------- Exchanging symbols with files
@@ -1418,7 +1447,13 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal-panel symbol-editor" onClick={(e) => e.stopPropagation()}>
         <div className="library-header">
-          <h3>Symbol — {category.name}</h3>
+          <input
+            className="symbol-editor-name"
+            value={nameText}
+            onChange={(e) => setNameText(e.target.value)}
+            aria-label="Component name"
+            title="The component's name — saved with Save Symbol"
+          />
           <div className="library-header-buttons">
             <button
               className={tab === 'draw' ? 'active' : ''}
@@ -1574,16 +1609,26 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
             <button
               disabled={saving || loading}
               onClick={() => void runImport()}
-              title={`Import a part drawing from a .${SYMBOL_FILE_EXTENSION} file, replacing what's in this editor (Save Symbol still has to confirm it)`}
+              title={`Import a drawing from a .${SYMBOL_FILE_EXTENSION} file, replacing what's in this editor (Save Symbol still has to confirm it)`}
             >
-              Import…
+              Import drawing…
             </button>
             <button
               disabled={saving || loading}
               onClick={() => void runExport()}
-              title={`Export this part drawing to a .${SYMBOL_FILE_EXTENSION} file — ports, arcs and scale included — for import into another instance of OpnPnID`}
+              title={`Export just this drawing to a .${SYMBOL_FILE_EXTENSION} file`}
             >
-              Export…
+              Export drawing…
+            </button>
+            <button
+              disabled={saving || loading}
+              onClick={() => void runShare()}
+              title="Save this whole component (name, family and drawing) to a file you can send to someone — they add it with File ▸ Import components"
+            >
+              Share component…
+            </button>
+            <button className="library-icon-button--danger" disabled={saving || loading} onClick={() => void runDelete()} title="Delete this component from your library">
+              Delete
             </button>
           </div>
           <button onClick={onClose}>Cancel</button>

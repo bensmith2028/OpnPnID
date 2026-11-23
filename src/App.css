@@ -818,6 +818,7 @@ body {
 
 .symbol-editor-footer {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 6px;
   margin-top: 12px;
@@ -827,8 +828,13 @@ body {
    the Cancel/Save pair the footer otherwise is. */
 .symbol-editor-footer-files {
   display: flex;
+  flex: 1 1 100%;
+  flex-wrap: wrap;
   gap: 6px;
-  margin-right: auto;
+}
+
+.symbol-editor-footer-files .library-icon-button--danger {
+  margin-left: auto;
 }
 
 .symbol-editor-footer button {
@@ -1124,4 +1130,127 @@ body {
 
 .canvas-hint strong {
   color: var(--text);
+}
+
+/* ---------------------------------------------------------------------------------
+   Icon buttons, library rows, toasts
+   --------------------------------------------------------------------------------- */
+.toolbar .icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 8px;
+}
+
+.library-list-row .library-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0 !important;
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-muted);
+}
+
+.library-list-row .library-icon-button:hover {
+  color: var(--text);
+  background: var(--bg-button-hover);
+  border-color: var(--border);
+}
+
+.library-category-tabs {
+  align-items: center;
+}
+
+.library-category-tabs .library-gear {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 6px;
+  margin-left: auto;
+  background: transparent;
+  color: var(--text-muted);
+  border-color: transparent;
+}
+
+.library-category-tabs .library-gear:hover,
+.library-category-tabs .library-gear.active {
+  color: var(--text);
+  background: var(--bg-button-hover);
+}
+
+.library-new,
+.library-add-row button {
+  background: var(--bg-button);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.library-new {
+  align-self: flex-start;
+}
+
+.library-add-row .library-primary {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: var(--accent);
+}
+
+.symbol-editor-name {
+  flex: 1 1 200px;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 4px 6px;
+}
+
+.symbol-editor-name:hover {
+  border-color: var(--border);
+}
+
+.symbol-editor-name:focus {
+  outline: none;
+  background: var(--bg-input);
+  border-color: var(--accent);
+}
+
+.toaster {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 360px;
+}
+
+.toast {
+  padding: 10px 14px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.toast--error {
+  border-left-color: var(--error);
+}
+
+/* Short windows: the edit view scrolls instead of clipping its Save button. */
+.modal-panel.symbol-editor {
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
 }

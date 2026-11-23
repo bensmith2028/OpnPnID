@@ -119,10 +119,21 @@ function mutate<T>(change: (data: LibraryData) => T): Promise<T> {
     const data = await load();
     const result = change(data);
     await writeStored(data);
+    for (const listener of listeners) listener();
     return result;
   });
   queue = run.catch(() => {});
   return run;
+}
+
+/** Lets the UI re-read the library whenever anything changes it — including actions that
+ * start outside the library panel, like File ▸ Import. Returns the unsubscribe function. */
+const listeners = new Set<() => void>();
+export function onLibraryChange(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
 }
 
 function newId(prefix: string): string {

@@ -2,19 +2,38 @@ import { useEffect, useState } from 'react';
 import { MIN_SNAP_THRESHOLD_PX, useSketchStore } from '../canvas/store/useSketchStore';
 import { exportBomDetailed, exportBomSummary } from '../io/bomExport';
 import { exportPdf } from '../io/pdfExport';
-import { saveProject } from '../io/projectIO';
+import { describeImport, exportLibrary, importLibraryFile } from '../io/libraryIO';
+import { saveProjectAs } from '../io/projectIO';
+import { resetToDefaultLibrary } from '../library/db';
 import { describeError } from '../library/errors';
 import { Menu, MenuItem, MenuSeparator } from './Menu';
+import { notify } from './notice';
 import { guardUnsaved } from './unsavedGuard';
 
-/** Every file action (open/save/export) is a fire-and-forget async call from a plain
- * button — this runs it and surfaces a failure via a plain alert. There's no existing
- * lightweight toast/notification host in this codebase, so an alert is the simplest thing
- * that reliably gets a failure — including "that file isn't an OpnPnID project" on an
- * open — in front of the user. */
+/** Every file action (open/save/export) is a fire-and-forget async call from a menu item —
+ * this runs it and shows a failure (including "that file isn't an OpnPnID project" on an
+ * open) as a notification. */
 function runFileAction(fn: () => Promise<void>) {
-  fn().catch((e) => window.alert(describeError(e)));
+  fn().catch((e) => notify(describeError(e), 'error'));
 }
+
+async function importComponents(): Promise<void> {
+  const summary = await importLibraryFile();
+  if (summary) notify(describeImport(summary));
+}
+
+async function exportAllComponents(): Promise<void> {
+  const n = await exportLibrary();
+  notify(n > 0 ? `Exported ${n} component${n === 1 ? '' : 's'}.` : 'There are no components to export yet.');
+}
+
+async function resetComponents(): Promise<void> {
+  if (!window.confirm('Replace your whole component library with the built-in default? Components you added or changed will be lost. Export them first if you want to keep them.')) return;
+  await resetToDefaultLibrary();
+  notify('Component library reset to the default.');
+}
+
+const ICON = { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' } as const;
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 const MOD = isMac ? '⌘' : 'Ctrl+';
@@ -38,7 +57,7 @@ export function TopBar() {
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 's') {
         e.preventDefault();
-        runFileAction(saveProject);
+        runFileAction(saveProjectAs);
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -53,13 +72,17 @@ export function TopBar() {
           <>
             <MenuItem onClick={() => runFileAction(() => guardUnsaved('new'))}>New drawing</MenuItem>
             <MenuItem onClick={() => runFileAction(() => guardUnsaved('open'))}>Open…</MenuItem>
-            <MenuItem onClick={() => runFileAction(saveProject)} hint={`${MOD}S`}>
-              Save
+            <MenuItem onClick={() => runFileAction(saveProjectAs)} hint={`${MOD}S`}>
+              Save As…
             </MenuItem>
             <MenuSeparator />
             <MenuItem onClick={() => runFileAction(exportPdf)}>Export PDF</MenuItem>
             <MenuItem onClick={() => runFileAction(exportBomDetailed)}>Export parts list (every component)</MenuItem>
             <MenuItem onClick={() => runFileAction(exportBomSummary)}>Export parts list (counts)</MenuItem>
+            <MenuSeparator />
+            <MenuItem onClick={() => runFileAction(importComponents)}>Import components…</MenuItem>
+            <MenuItem onClick={() => runFileAction(exportAllComponents)}>Export all components…</MenuItem>
+            <MenuItem onClick={() => runFileAction(resetComponents)}>Reset component library…</MenuItem>
           </>
         )}
       </Menu>
@@ -76,15 +99,21 @@ export function TopBar() {
         )}
       </Menu>
       <div className="toolbar-group">
-        <button onClick={undo} disabled={!canUndo} title={`Undo (${MOD}Z)`}>
-          Undo
+        <button className="icon-button" onClick={undo} disabled={!canUndo} title={`Undo (${MOD}Z)`} aria-label="Undo">
+          <svg {...ICON} aria-hidden="true">
+            <path d="M9 14L4 9l5-5" />
+            <path d="M4 9h10.5a5.5 5.5 0 010 11H11" />
+          </svg>
         </button>
-        <button onClick={redo} disabled={!canRedo} title={`Redo (${MOD}Shift+Z)`}>
-          Redo
+        <button className="icon-button" onClick={redo} disabled={!canRedo} title={`Redo (${MOD}Shift+Z)`} aria-label="Redo">
+          <svg {...ICON} aria-hidden="true">
+            <path d="M15 14l5-5-5-5" />
+            <path d="M20 9H9.5a5.5 5.5 0 000 11H13" />
+          </svg>
         </button>
       </div>
       <div className="toolbar-spacer" />
-      <div className="toolbar-filename" title={dirty ? 'Unsaved changes — use File ▸ Save' : undefined}>
+      <div className="toolbar-filename" title={dirty ? 'Unsaved changes — use File ▸ Save As…' : undefined}>
         {fileName}
         {dirty ? ' •' : ''}
       </div>
