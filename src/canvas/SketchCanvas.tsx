@@ -314,7 +314,7 @@ export function SketchCanvas() {
   }, []);
 
   // Keyboard shortcuts: Escape, Delete, Undo/Redo, Copy/Paste (selected components and/or
-  // lines/arcs/points), Space-to-pan, Alt-to-disable-snap. Undo/Redo/Copy/Paste are also
+  // lines/arcs/points), Select All, Space-to-pan, Alt-to-disable-snap. Undo/Redo/Copy/Paste are also
   // handled here via a plain Ctrl/Cmd+Z|Y|C|V keydown check.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -350,8 +350,14 @@ export function SketchCanvas() {
       } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'v') {
         e.preventDefault();
         useSketchStore.getState().pasteSelection();
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a') {
+        e.preventDefault();
+        useSketchStore.getState().selectAll();
       } else if (!e.metaKey && !e.ctrlKey && !e.altKey) {
-        if (e.key.toLowerCase() === 'v') useSketchStore.getState().setTool('select');
+        // R turns selected components 45° clockwise; Shift+R turns them back. Only does anything
+        // when a component is selected, so it never steals the key from something else.
+        if (e.key.toLowerCase() === 'r') useSketchStore.getState().rotateSelectedComponents(e.shiftKey ? -45 : 45);
+        else if (e.key.toLowerCase() === 'v') useSketchStore.getState().setTool('select');
         else if (e.key.toLowerCase() === 'l') useSketchStore.getState().setTool('line');
         else if (e.key.toLowerCase() === 'a') useSketchStore.getState().setTool('arc');
         else if (e.key.toLowerCase() === 'p') useSketchStore.getState().setTool('point');
@@ -425,7 +431,12 @@ export function SketchCanvas() {
       )}
       {armedCategoryId && armedName && (
         <div className="canvas-hint">
-          Placing <strong>{armedName}</strong> — click to place · hold Alt to place off-grid · Esc to stop
+          <span className="canvas-hint-dot" aria-hidden="true" />
+          <span>
+            Ready to place <strong>{armedName}</strong> — click the canvas
+            <span className="canvas-hint-keys"> · Alt = off-grid · Esc = stop</span>
+          </span>
+          <button onClick={() => useSketchStore.getState().setTool('select')}>Done</button>
         </div>
       )}
       {textEditor && textEditorScreen && (

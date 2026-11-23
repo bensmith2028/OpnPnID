@@ -67,7 +67,7 @@
  * anything newer is refused with a "saved by a newer version" message rather than being
  * half-loaded.
  */
-import type { SymbolGeometry, Vec2 } from '../types/geometry';
+import { MAX_LINE_WEIGHT, MIN_LINE_WEIGHT, type SymbolGeometry, type SymbolLine, type Vec2 } from '../types/geometry';
 
 export const SYMBOL_FORMAT_VERSION = 2;
 export const MIN_SUPPORTED_SYMBOL_VERSION = 1;
@@ -273,7 +273,8 @@ function parseGeometry(raw: Record<string, unknown>): SymbolGeometry {
       fail('This symbol file is damaged: one of its lines is incomplete.');
     }
     requirePoints(points, entry[0], entry[1]);
-    return [entry[0], entry[1]] as [string, string];
+    const weight = readWeight(entry[2]);
+    return (weight === undefined ? [entry[0], entry[1]] : [entry[0], entry[1], weight]) as SymbolLine;
   });
 
   const arcs = readList(raw.arcs, 'arcs').map((entry) => {
@@ -281,7 +282,8 @@ function parseGeometry(raw: Record<string, unknown>): SymbolGeometry {
       fail('This symbol file is damaged: one of its arcs is incomplete.');
     }
     requirePoints(points, entry.a, entry.b);
-    return { a: entry.a, b: entry.b, bulge: entry.bulge };
+    const weight = readWeight(entry.weight);
+    return { a: entry.a, b: entry.b, bulge: entry.bulge, ...(weight === undefined ? {} : { weight }) };
   });
 
   const ports = readList(raw.ports, 'ports').map((id) => {
@@ -301,6 +303,12 @@ function parseGeometry(raw: Record<string, unknown>): SymbolGeometry {
   // lettering round-trips identical to the way every symbol authored before labels
   // existed looks — one shape of "no labels", not two.
   return { points, lines, arcs, ports, image: parseImage(raw.image), ...(texts.length > 0 ? { texts } : {}) };
+}
+
+/** An optional stroke thickness: kept only if it's a sane number, otherwise treated as absent
+ * (so a hand-edited or damaged value falls back to the default rather than failing the file). */
+function readWeight(value: unknown): number | undefined {
+  return isFiniteNumber(value) && value >= MIN_LINE_WEIGHT && value <= MAX_LINE_WEIGHT ? value : undefined;
 }
 
 function parseImage(raw: unknown): SymbolGeometry['image'] {

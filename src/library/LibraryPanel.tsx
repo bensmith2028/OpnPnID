@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useSketchStore } from '../canvas/store/useSketchStore';
 import { CategorySection } from './CategoryForm';
 import * as db from './db';
 import { describeError } from './errors';
@@ -11,23 +12,47 @@ const GEAR = (
   </svg>
 );
 
-/** The Library tab: families as tabs across the top, the components in the selected family
- * below. Everything about *moving* components in and out (import, export, reset) lives in the
- * File menu; renaming, redrawing, sharing and deleting one component is done from the pencil
- * on its row. The gear at the end of the tab row manages the families themselves. */
+const EXPANDED_KEY = 'opnpnid.expandedFamilies';
+
+/** Which families are open. Everything starts folded shut; what you open is remembered between
+ * visits where the browser allows it, and simply not remembered where it doesn't (private
+ * windows) — never worth failing over. */
+function loadExpanded(): Set<string> {
+  try {
+    const raw = window.localStorage.getItem(EXPANDED_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveExpanded(ids: Set<string>): void {
+  try {
+    window.localStorage.setItem(EXPANDED_KEY, JSON.stringify([...ids]));
+  } catch {
+    /* not remembered — fine */
+  }
+}
+
+/** The Library: every family listed, each folding open or shut (all shut to begin with), with
+ * its components indented beneath. Clicking a component's name picks it to place; its pencil opens the edit
+ * view. Moving components in and out (import, export, reset) is in the File menu. The gear
+ * manages the families themselves. */
 export function LibraryPanel() {
   const [families, setFamilies] = useState<db.Family[]>([]);
-  const [selectedFamilyId, setSelectedFamilyId] = useState<string | null>(null);
+  const [names, setNames] = useState<Record<string, string>>({});
+  const armedId = useSketchStore((s) => s.armedComponent?.categoryId ?? null);
+  const stopPlacing = useSketchStore((s) => s.setTool);
+  const [expanded, setExpanded] = useState<Set<string>>(loadExpanded);
   const [managingFamilies, setManagingFamilies] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = () =>
-    db
-      .listFamilies()
-      .then((fams) => {
+    Promise.all([db.listFamilies(), db.listCategories()])
+      .then(([fams, cats]) => {
         setFamilies(fams);
-        // Keep the current tab if it still exists (an import may have added others).
-        setSelectedFamilyId((current) => (current && fams.some((f) => f.id === current) ? current : fams[0]?.id ?? null));
+        setNames(Object.fromEntries(cats.map((c) => [c.id, c.name])));
         setError(null);
       })
       .catch((e: unknown) => setError(describeError(e)));
@@ -37,23 +62,19 @@ export function LibraryPanel() {
     return db.onLibraryChange(() => void load());
   }, []);
 
+  const toggle = (id: string) => {
+    const next = new Set(expanded);
+    if (!next.delete(id)) next.add(id);
+    setExpanded(next);
+    saveExpanded(next);
+  };
+
   return (
     <div className="properties-panel library-panel">
       {error && <p className="field-error">Couldn't load the library: {error}</p>}
 
-      <div className="library-category-tabs">
-        {families.map((f) => (
-          <button
-            key={f.id}
-            className={!managingFamilies && selectedFamilyId === f.id ? 'active' : ''}
-            onClick={() => {
-              setManagingFamilies(false);
-              setSelectedFamilyId(f.id);
-            }}
-          >
-            {f.name}
-          </button>
-        ))}
+      <div className="library-toolbar">
+        <h3>Library</h3>
         <button
           className={`library-gear${managingFamilies ? ' active' : ''}`}
           onClick={() => setManagingFamilies((m) => !m)}
@@ -64,12 +85,42 @@ export function LibraryPanel() {
         </button>
       </div>
 
+      {armedId && names[armedId] && (
+        <div className="library-placing">
+          <span>
+            Ready to place <strong>{names[armedId]}</strong> — click the canvas
+          </span>
+          <button onClick={() => stopPlacing('select')} title="Stop placing (Esc)">
+            Done
+          </button>
+        </div>
+      )}
+
       {managingFamilies ? (
         <FamilyManager families={families} onChange={() => void load()} />
       ) : families.length === 0 ? (
         !error && <p className="properties-panel--empty">No families yet — use the gear to add one, or File ▸ Import components.</p>
       ) : (
-        selectedFamilyId && <CategorySection key={selectedFamilyId} familyId={selectedFamilyId} />
+        <div className="library-tree">
+          {families.map((f) => {
+            const open = expanded.has(f.id);
+            return (
+              <div key={f.id} className="library-family">
+                <button className="library-family-header" onClick={() => toggle(f.id)} aria-expanded={open} title={open ? 'Hide this family\'s components' : 'Show this family\'s components'}>
+                  <span className="library-chevron" aria-hidden="true">
+                    {open ? '▾' : '▸'}
+                  </span>
+                  <span className="library-family-name">{f.name}</span>
+                </button>
+                {open && (
+                  <div className="library-family-body">
+                    <CategorySection familyId={f.id} />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );

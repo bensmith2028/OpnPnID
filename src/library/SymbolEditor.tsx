@@ -30,25 +30,49 @@ import {
 import { SceneGraph } from '../canvas/sceneGraph';
 import { computeSnap, type SnapOptions, type SnapResult } from '../canvas/snapping';
 import { SYMBOL_FILE_EXTENSION } from '../io/symbolFormat';
-import { shareComponent } from '../io/libraryIO';
 import { exportSymbol, importSymbol } from '../io/symbolIO';
-import type { Id, SceneGraphJSON, SymbolGeometry, Vec2 } from '../types/geometry';
+import type { Id, SceneGraphJSON, SymbolGeometry, SymbolLine, Vec2 } from '../types/geometry';
+import { strokeWidth } from '../canvas/renderer';
+import { ConfirmDialog } from '../ui/ConfirmDialog';
+import { PORT_TOOL, SHARED_TOOLS, type ToolDef, ToolRailView } from '../ui/ToolRail';
+import { WeightField, commonWeight } from '../ui/WeightField';
 import { resolveSymbol } from './builtinSymbols';
 import * as db from './db';
 import { describeError } from './errors';
 
-const CANVAS_PX = 560;
+const CANVAS_PX = 616;
 /** Fixed zoom: visible range is CANVAS_PX / 2 / PX_PER_UNIT = ±28 local units. Sized for
  * the built-in symbols' actual extents, not just their nominal "±14" convention — the
  * automated-actuator valves' actuator box reaches y=-21 (see builtinSymbols.ts's
  * withAutomatedStem), so ±20 (the old 480px/12px-per-unit view) clipped it. ±28 leaves
  * real margin above that, and above the default uploaded-image width too. */
-const PX_PER_UNIT = 10;
+const PX_PER_UNIT = 11;
 const GRID_UNITS = 2;
+/** Vertical space the rest of the edit window takes (header, tool row, status, footer,
+ * padding), so the canvas can be sized to leave the window free of scrollbars. */
+const EDITOR_CHROME_HEIGHT = 250;
+/** Width of everything beside the canvas (the tool rail) plus the window's own padding. */
+const EDITOR_SIDE_WIDTH = 130;
+const MIN_VIEW_PX = 260;
+
+/** How big, in CSS pixels, to show the (CANVAS_PX × CANVAS_PX) drawing canvas so the whole
+ * edit window fits the browser window. The canvas always *draws* at CANVAS_PX; this only
+ * scales how it's displayed, and pointer positions are mapped back (see `pointerPx`). */
+function fitViewPx(): number {
+  const byHeight = window.innerHeight - EDITOR_CHROME_HEIGHT;
+  const byWidth = window.innerWidth - EDITOR_SIDE_WIDTH - 48;
+  return Math.round(Math.max(MIN_VIEW_PX, Math.min(CANVAS_PX, byHeight, byWidth)));
+}
+
+/** Where a pointer event landed on the canvas, in CANVAS_PX coordinates regardless of the
+ * size the canvas is displayed at. */
+function pointerPx(e: { clientX: number; clientY: number; currentTarget: Element }): { x: number; y: number } {
+  const rect = e.currentTarget.getBoundingClientRect();
+  const k = rect.width > 0 ? CANVAS_PX / rect.width : 1;
+  return { x: (e.clientX - rect.left) * k, y: (e.clientY - rect.top) * k };
+}
 /** Click/snap tolerance in screen pixels, converted to local units where needed. */
 const PICK_PX = 8;
-/** Roughly the width of a built-in symbol, so an uploaded image lands at a comparable scale. */
-const DEFAULT_IMAGE_WIDTH = 28;
 /** Local units a pasted copy is nudged by, so it doesn't land exactly on its original.
  * Repeated pastes of the same clipboard cascade by multiples of this. */
 const PASTE_OFFSET = 2;
@@ -63,15 +87,17 @@ const DEFAULT_TEXT_SIZE = 4;
 const MIN_TEXT_SIZE = 0.1;
 const MAX_TEXT_SIZE = CANVAS_PX / 2 / PX_PER_UNIT;
 
-type EditorTab = 'draw' | 'image';
+/** Same order as the main window's rail (Select, Line, Arc, Point, Circle, Text), then Port. */
+const EDITOR_TOOLS: ToolDef<DrawTool>[] = [SHARED_TOOLS.select, SHARED_TOOLS.line, SHARED_TOOLS.arc, SHARED_TOOLS.point, SHARED_TOOLS.circle, SHARED_TOOLS.text, PORT_TOOL];
+
 /** Same order as the main app's own toolbar (Toolbar.tsx) — Select, Line, Arc, Point,
  * Circle, Text — so the two tool rows read as the same tool set, not a different order to
  * relearn just because this modal is open. */
-type DrawTool = 'select' | 'line' | 'arc' | 'point' | 'circle' | 'text';
+type DrawTool = 'select' | 'line' | 'arc' | 'point' | 'circle' | 'text' | 'port';
 /** Hotkeys deliberately mirror the main app's own tool letters (see SketchCanvas's key
- * handler) — muscle memory shouldn't change just because this modal is open. */
-const TOOL_HOTKEYS: Record<DrawTool, string> = { select: 'V', line: 'L', arc: 'A', point: 'P', circle: 'C', text: 'T' };
-const HOTKEY_TOOLS: Record<string, DrawTool> = { v: 'select', l: 'line', a: 'arc', p: 'point', c: 'circle', t: 'text' };
+ * handler) — muscle memory shouldn't change just because this modal is open. The letters shown
+ * on the rail buttons come from the shared tool definitions (ui/ToolRail.tsx). */
+const HOTKEY_TOOLS: Record<string, DrawTool> = { v: 'select', l: 'line', a: 'arc', p: 'point', c: 'circle', t: 'text', o: 'port' };
 
 /** What one click landed on — the atom a selection is built from. */
 type DrawHit = { kind: 'point' | 'line' | 'arc' | 'text'; id: Id } | null;
@@ -89,8 +115,8 @@ interface DrawSelection {
  * shapes, never connection semantics — a pasted point is never automatically a port. */
 interface DrawClipboard {
   points: { id: Id; x: number; y: number }[];
-  lines: [Id, Id][];
-  arcs: { a: Id; b: Id; bulge: number }[];
+  lines: [Id, Id, number?][];
+  arcs: { a: Id; b: Id; bulge: number; weight?: number }[];
   texts: { x: number; y: number; text: string; size: number }[];
 }
 
@@ -176,14 +202,6 @@ function editorSnap(opts: Omit<SnapOptions, 'threshold' | 'gridSize'>): SnapResu
   return computeSnap({ ...opts, threshold: PICK_PX / PX_PER_UNIT, gridSize: GRID_UNITS });
 }
 
-/** A port placed on an uploaded image. Image symbols have no other geometry, so every
- * point the user places here IS a port — no separate marking step. */
-interface ImagePort {
-  id: string;
-  x: number;
-  y: number;
-}
-
 function localToScreen(p: Vec2): Vec2 {
   return { x: CANVAS_PX / 2 + p.x * PX_PER_UNIT, y: CANVAS_PX / 2 + p.y * PX_PER_UNIT };
 }
@@ -216,11 +234,11 @@ function freshId(graph: SceneGraph, prefix: string): Id {
  * skipped rather than trusted — stored geometry is user data, not an invariant. */
 function populateGraph(graph: SceneGraph, geometry: SymbolGeometry) {
   for (const [id, p] of Object.entries(geometry.points)) graph.addPoint(p.x, p.y, id);
-  for (const [a, b] of geometry.lines) {
-    if (graph.points.has(a) && graph.points.has(b)) graph.addLine(a, b, null, freshId(graph, 'l'));
+  for (const [a, b, weight] of geometry.lines) {
+    if (graph.points.has(a) && graph.points.has(b)) graph.addLine(a, b, null, freshId(graph, 'l'), weight);
   }
   for (const arc of geometry.arcs) {
-    if (graph.points.has(arc.a) && graph.points.has(arc.b)) graph.addArc(arc.a, arc.b, arc.bulge, freshId(graph, 'a'));
+    if (graph.points.has(arc.a) && graph.points.has(arc.b)) graph.addArc(arc.a, arc.b, arc.bulge, freshId(graph, 'a'), arc.weight);
   }
   // Labels get editing-session ids (they have none in the stored symbol — see SymbolText),
   // exactly like lines and arcs do.
@@ -233,8 +251,8 @@ function graphToGeometry(graph: SceneGraph, ports: string[]): SymbolGeometry {
   const texts = [...graph.texts.values()].map((t) => ({ x: t.x, y: t.y, text: t.text, size: t.fontSize }));
   return {
     points: Object.fromEntries([...graph.points.values()].map((p) => [p.id, { x: p.x, y: p.y }])),
-    lines: [...graph.lines.values()].map((l) => [l.startId, l.endId] as [string, string]),
-    arcs: [...graph.arcs.values()].map((a) => ({ a: a.startId, b: a.endId, bulge: a.bulge })),
+    lines: [...graph.lines.values()].map((l) => (l.weight === undefined ? [l.startId, l.endId] : [l.startId, l.endId, l.weight]) as SymbolLine),
+    arcs: [...graph.arcs.values()].map((a) => ({ a: a.startId, b: a.endId, bulge: a.bulge, ...(a.weight === undefined ? {} : { weight: a.weight }) })),
     ports: ports.filter((id) => graph.points.has(id)),
     // Absent rather than `[]` when there are none, so an unlabelled symbol serializes the
     // same way every symbol authored before labels existed does (see symbolFormat.ts).
@@ -332,12 +350,31 @@ function strokeLocalArc(ctx: CanvasRenderingContext2D, start: Vec2, end: Vec2, b
 
 /** Ports are drawn as larger accent-coloured rings so it's obvious at a glance which
  * points a pipe will be able to attach to. */
-function drawPointMarker(ctx: CanvasRenderingContext2D, p: Vec2, colors: EditorColors, isPort: boolean, isSelected: boolean) {
+/** A plain point is a small dot; a port is its own kind of object, drawn as a larger ring with
+ * its connection order (1, 2, …) beside it, so the two can never be mistaken for each other. */
+function drawPointMarker(ctx: CanvasRenderingContext2D, p: Vec2, colors: EditorColors, portNumber: number | null, isSelected: boolean) {
   const s = localToScreen(p);
   ctx.beginPath();
-  ctx.arc(s.x, s.y, isPort ? 5.5 : 3.5, 0, Math.PI * 2);
-  ctx.fillStyle = isPort ? colors.accent : colors.point;
-  ctx.fill();
+  if (portNumber !== null) {
+    ctx.arc(s.x, s.y, 6, 0, Math.PI * 2);
+    ctx.fillStyle = colors.bg;
+    ctx.fill();
+    ctx.strokeStyle = colors.accent;
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, 2, 0, Math.PI * 2);
+    ctx.fillStyle = colors.accent;
+    ctx.fill();
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText(String(portNumber), s.x + 8, s.y - 6);
+  } else {
+    ctx.arc(s.x, s.y, 3.5, 0, Math.PI * 2);
+    ctx.fillStyle = colors.point;
+    ctx.fill();
+  }
   if (isSelected) {
     ctx.beginPath();
     ctx.arc(s.x, s.y, 9, 0, Math.PI * 2);
@@ -459,13 +496,13 @@ function clipboardFromSelection(graph: SceneGraph, sel: DrawSelection): DrawClip
     .map((t) => ({ x: t.x, y: t.y, text: t.text, size: t.fontSize }));
   if (points.length === 0 && texts.length === 0) return null;
 
-  const lines: [Id, Id][] = [];
+  const lines: [Id, Id, number?][] = [];
   for (const line of graph.lines.values()) {
-    if (pointIds.has(line.startId) && pointIds.has(line.endId)) lines.push([line.startId, line.endId]);
+    if (pointIds.has(line.startId) && pointIds.has(line.endId)) lines.push([line.startId, line.endId, line.weight]);
   }
   const arcs = [...graph.arcs.values()]
     .filter((arc) => pointIds.has(arc.startId) && pointIds.has(arc.endId))
-    .map((arc) => ({ a: arc.startId, b: arc.endId, bulge: arc.bulge }));
+    .map((arc) => ({ a: arc.startId, b: arc.endId, bulge: arc.bulge, weight: arc.weight }));
 
   return { points, lines, arcs, texts };
 }
@@ -484,6 +521,23 @@ function clampTextSize(size: number): number {
   return Math.min(MAX_TEXT_SIZE, Math.max(MIN_TEXT_SIZE, size));
 }
 
+/** One-line description of what's selected, for the Properties column. A selected port says
+ * where it sits in the connection order. */
+function describeSelection(sel: DrawSelection, ports: string[]): string {
+  const selectedPorts = [...sel.points].filter((id) => ports.includes(id));
+  if (selectedPorts.length === 1 && selectionCount(sel) === 1) {
+    return `Port ${ports.indexOf(selectedPorts[0]) + 1} of ${ports.length}`;
+  }
+  const parts: string[] = [];
+  const add = (n: number, noun: string) => n > 0 && parts.push(`${n} ${noun}${n === 1 ? '' : 's'}`);
+  add(sel.points.size - selectedPorts.length, 'point');
+  add(selectedPorts.length, 'port');
+  add(sel.lines.size, 'line');
+  add(sel.arcs.size, 'arc');
+  add(sel.texts.size, 'label');
+  return parts.length > 0 ? `Selected: ${parts.join(', ')}` : 'Nothing selected';
+}
+
 export function SymbolEditor({ category, onClose, onSaved }: { category: db.Category; onClose: () => void; onSaved: () => void }) {
   // One isolated graph per editor session — deliberately NOT the app's document graph;
   // this is a throwaway scratch scene that only ever becomes a SymbolGeometry. Undo/redo
@@ -494,9 +548,25 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
   const graphRef = useRef<SceneGraph | null>(null);
   const graph = (graphRef.current ??= new SceneGraph());
 
-  const [tab, setTab] = useState<EditorTab>('draw');
   /** The component's name, editable in the header and saved along with the drawing. */
   const [nameText, setNameText] = useState(category.name);
+  /** Whether the "delete this component?" confirmation is up. */
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  /** The family it belongs to — changing it here moves the component when the drawing is saved. */
+  const [familyId, setFamilyId] = useState(category.familyId);
+  const [families, setFamilies] = useState<db.Family[]>([]);
+  useEffect(() => {
+    void db.listFamilies().then(setFamilies);
+  }, []);
+  /** Displayed canvas size, kept to what fits the window (see fitViewPx). */
+  const [viewPx, setViewPx] = useState(fitViewPx);
+  useEffect(() => {
+    const onResize = () => setViewPx(fitViewPx());
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  /** Display scale relative to the drawing canvas, for positioning the label editor. */
+  const viewScale = viewPx / CANVAS_PX;
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -571,56 +641,31 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
     }
   };
 
-  const [imageDataUrl, setImageDataUrl] = useState<string | null>(null);
-  const [imageEl, setImageEl] = useState<HTMLImageElement | null>(null);
-  const [aspect, setAspect] = useState<number | null>(null);
-  const [widthText, setWidthText] = useState(String(DEFAULT_IMAGE_WIDTH));
-  const [heightText, setHeightText] = useState(String(DEFAULT_IMAGE_WIDTH));
-  const [lockAspect, setLockAspect] = useState(true);
-  const [imagePorts, setImagePorts] = useState<ImagePort[]>([]);
-  const imagePortCounter = useRef(0);
+  /** A picture the symbol carries as its body, if it came in with one (an imported file can).
+   * There's no way to add one here any more, but an existing one is kept and shown behind the
+   * drawing, and saved back untouched. */
+  const [bodyImage, setBodyImage] = useState<NonNullable<SymbolGeometry['image']> | null>(null);
+  const [bodyImageEl, setBodyImageEl] = useState<HTMLImageElement | null>(null);
 
   const drawCanvasRef = useRef<HTMLCanvasElement>(null);
-  const imageCanvasRef = useRef<HTMLCanvasElement>(null);
 
   /** Makes a `SymbolGeometry` the thing being edited — the initial content, or an imported
    * file. Replaces the graph wholesale (the same swap undo/redo does) rather than merging
-   * into whatever's there, and opens the tab that authored the symbol. `isStale` guards the
-   * image decode, which finishes asynchronously and may outlive the editor. */
+   * into whatever's there. */
   const applyGeometry = (geometry: SymbolGeometry, isStale: () => boolean = () => false) => {
     const nextGraph = new SceneGraph();
     graphRef.current = nextGraph;
     populateGraph(nextGraph, geometry);
     setPortsSynced(geometry.ports.filter((id) => nextGraph.points.has(id)));
-    setTab(geometry.image ? 'image' : 'draw');
+    // The image decodes asynchronously and may outlive the editor, hence the staleness check.
+    setBodyImage(geometry.image ?? null);
+    setBodyImageEl(null);
     if (geometry.image) {
-      // Image symbol: open on the tab that made it, prefilled.
-      setImageDataUrl(geometry.image.dataUrl);
-      setWidthText(formatUnits(geometry.image.width));
-      setHeightText(formatUnits(geometry.image.height));
-      setImagePorts(
-        geometry.ports.filter((id) => geometry.points[id]).map((id) => ({ id, x: geometry.points[id].x, y: geometry.points[id].y })),
-      );
-      // Past the highest existing suffix, not just the count — ports removed before a
-      // previous save leave gaps, and reusing a gap id would collide.
-      imagePortCounter.current = geometry.ports.reduce((max, id) => {
-        const n = parseInt(id.replace(/^port/, ''), 10);
-        return Number.isNaN(n) ? max : Math.max(max, n + 1);
-      }, 0);
       const img = new Image();
       img.onload = () => {
-        if (isStale()) return;
-        setAspect(img.naturalHeight > 0 ? img.naturalWidth / img.naturalHeight : null);
-        setImageEl(img);
+        if (!isStale()) setBodyImageEl(img);
       };
       img.src = geometry.image.dataUrl;
-    } else {
-      // A vector symbol replacing a raster one has to clear the image tab as well, or the
-      // old body stays behind on it, ready to be saved over the new drawing.
-      setImageDataUrl(null);
-      setImageEl(null);
-      setAspect(null);
-      setImagePorts([]);
     }
     bump();
   };
@@ -722,13 +767,13 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
       points.add(created.id);
     }
     const lines = new Set<Id>();
-    for (const [a, b] of clipboard.lines) {
-      const created = graph.addLine(idMap.get(a)!, idMap.get(b)!, null, freshId(graph, 'l'));
+    for (const [a, b, weight] of clipboard.lines) {
+      const created = graph.addLine(idMap.get(a)!, idMap.get(b)!, null, freshId(graph, 'l'), weight);
       if (created) lines.add(created.id);
     }
     const arcs = new Set<Id>();
     for (const arc of clipboard.arcs) {
-      const created = graph.addArc(idMap.get(arc.a)!, idMap.get(arc.b)!, arc.bulge, freshId(graph, 'a'));
+      const created = graph.addArc(idMap.get(arc.a)!, idMap.get(arc.b)!, arc.bulge, freshId(graph, 'a'), arc.weight);
       if (created) arcs.add(created.id);
     }
     const texts = new Set<Id>();
@@ -852,11 +897,9 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
           return;
         }
         if (isEditingText) (target as HTMLElement).blur();
-        if (tab === 'draw') {
-          if (pendingLine || pendingArc || pendingCircle || marquee || groupDrag) cancelPending();
-          else if (tool === 'select') setSelection(emptySelection());
-          else setTool('select');
-        }
+        if (pendingLine || pendingArc || pendingCircle || marquee || groupDrag) cancelPending();
+        else if (tool === 'select') setSelection(emptySelection());
+        else setTool('select');
         return;
       }
       if (isEditingText) return;
@@ -864,10 +907,9 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
 
       const key = e.key.toLowerCase();
       if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (tab === 'draw') deleteSelected();
+        deleteSelected();
       } else if (e.metaKey || e.ctrlKey) {
         // preventDefault so the browser's own copy/paste/undo doesn't fire alongside ours.
-        if (tab !== 'draw') return;
         if (key === 'c') {
           e.preventDefault();
           copySelection();
@@ -882,7 +924,7 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
           e.preventDefault();
           redo();
         }
-      } else if (!e.altKey && tab === 'draw' && HOTKEY_TOOLS[key]) {
+      } else if (!e.altKey && HOTKEY_TOOLS[key]) {
         setTool(HOTKEY_TOOLS[key]);
         cancelPending();
       }
@@ -901,15 +943,13 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
     pendingLine,
     putTextEditor,
     redo,
-    tab,
     tool,
     undo,
   ]);
 
-  // ------------------------------------------------------------------ Draw tab canvas
+  // ------------------------------------------------------------------------- Canvas
 
   useEffect(() => {
-    if (tab !== 'draw') return;
     const canvas = drawCanvasRef.current;
     if (!canvas) return;
     const ctx = prepareCanvas(canvas);
@@ -917,13 +957,19 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
     const colors = editorColors();
     drawBackdrop(ctx, colors);
 
-    ctx.strokeStyle = colors.line;
-    ctx.lineWidth = 2;
+    // A picture body the symbol came with sits behind everything, as it will on the schematic.
+    if (bodyImage && bodyImageEl) {
+      const w = bodyImage.width * PX_PER_UNIT;
+      const h = bodyImage.height * PX_PER_UNIT;
+      ctx.drawImage(bodyImageEl, CANVAS_PX / 2 - w / 2, CANVAS_PX / 2 - h / 2, w, h);
+    }
+
     for (const line of graph.lines.values()) {
       const a = graph.points.get(line.startId);
       const b = graph.points.get(line.endId);
       if (!a || !b) continue;
       ctx.strokeStyle = selection.lines.has(line.id) ? colors.accent : colors.line;
+      ctx.lineWidth = strokeWidth(line.weight, selection.lines.has(line.id));
       const sa = localToScreen(a);
       const sb = localToScreen(b);
       ctx.beginPath();
@@ -937,6 +983,7 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
       const b = graph.points.get(arc.endId);
       if (!a || !b) continue;
       ctx.strokeStyle = selection.arcs.has(arc.id) ? colors.accent : colors.line;
+      ctx.lineWidth = strokeWidth(arc.weight, selection.arcs.has(arc.id));
       strokeLocalArc(ctx, a, b, arc.bulge);
     }
 
@@ -976,7 +1023,7 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
     const portSet = new Set(ports);
     for (const p of graph.points.values()) {
       const isPending = p.id === pendingLine || p.id === pendingArc?.startId || p.id === pendingArc?.endId;
-      drawPointMarker(ctx, p, colors, portSet.has(p.id), isPending || selection.points.has(p.id));
+      drawPointMarker(ctx, p, colors, portSet.has(p.id) ? ports.indexOf(p.id) + 1 : null, isPending || selection.points.has(p.id));
     }
 
     if (marquee) {
@@ -999,7 +1046,7 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
       ctx.strokeRect(x, y, w, h);
       ctx.restore();
     }
-  }, [graph, ports, selection, marquee, pendingArc, pendingCircle, circleCursor, pendingLine, tab, version]);
+  }, [graph, ports, selection, marquee, pendingArc, pendingCircle, circleCursor, pendingLine, version, bodyImageEl, bodyImage]);
 
   const onDrawPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     // A click on the canvas finishes an open label editor and does nothing else — same
@@ -1009,8 +1056,7 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
       commitTextEditor();
       return;
     }
-    const rect = e.currentTarget.getBoundingClientRect();
-    const local = screenToLocal({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+    const local = screenToLocal(pointerPx(e));
     setError(null);
 
     if (tool === 'select') {
@@ -1116,7 +1162,14 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
     const pointAt = (): Id => snap.snappedPointId ?? graph.addPoint(snap.point.x, snap.point.y, freshId(graph, 'p')).id;
     const before = captureSnapshot();
 
-    if (tool === 'point') {
+    if (tool === 'port') {
+      // A port is a distinct object you place — never an existing point re-labelled. Clicking
+      // a port that's already there just selects it, rather than stacking a second on top.
+      const existingPort = snap.snappedPointId && ports.includes(snap.snappedPointId) ? snap.snappedPointId : null;
+      const id = existingPort ?? graph.addPoint(snap.point.x, snap.point.y, freshId(graph, 'port')).id;
+      if (!existingPort) setPortsSynced([...ports, id]);
+      setSelection({ points: new Set([id]), lines: new Set(), arcs: new Set(), texts: new Set() });
+    } else if (tool === 'point') {
       setSelection({ points: new Set([pointAt()]), lines: new Set(), arcs: new Set(), texts: new Set() });
     } else if (tool === 'line') {
       const id = pointAt();
@@ -1170,8 +1223,7 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
 
   const onDrawPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!marquee && !pendingCircle && !groupDrag) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const local = screenToLocal({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+    const local = screenToLocal(pointerPx(e));
 
     if (groupDrag) {
       let delta: Vec2 = { x: local.x - groupDrag.grabLocal.x, y: local.y - groupDrag.grabLocal.y };
@@ -1221,8 +1273,7 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
 
   const onDrawDoubleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (tool !== 'select') return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const local = screenToLocal({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+    const local = screenToLocal(pointerPx(e));
     const hit = hitTest(graph, local);
     const existing = hit?.kind === 'text' ? graph.texts.get(hit.id) : undefined;
     if (!existing) return;
@@ -1230,101 +1281,28 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
     putTextEditor({ id: existing.id, local: { x: existing.x, y: existing.y }, size: existing.fontSize, value: existing.text });
   };
 
-  const selectedPointId = selection.points.size === 1 ? [...selection.points][0] : null;
-
-  /** Marking several points as ports at once is a different, more error-prone action, so
-   * this stays a single-point operation even though the selection can hold many. */
-  const togglePort = () => {
-    if (!selectedPointId) return;
+  /** Sets the line weight of every selected line and arc (null = back to the default). */
+  const applyWeight = (weight: number | null) => {
     const before = captureSnapshot();
-    const next = ports.includes(selectedPointId) ? ports.filter((p) => p !== selectedPointId) : [...ports, selectedPointId];
-    setPortsSynced(next);
+    graph.setWeight({ lineIds: selection.lines, arcIds: selection.arcs }, weight);
     pushHistoryIfChanged(before);
+    bump();
   };
-
-  // ----------------------------------------------------------------- Image tab canvas
-
-  useEffect(() => {
-    if (tab !== 'image') return;
-    const canvas = imageCanvasRef.current;
-    if (!canvas) return;
-    const ctx = prepareCanvas(canvas);
-    if (!ctx) return;
-    const colors = editorColors();
-    drawBackdrop(ctx, colors);
-
-    const width = parseFloat(widthText);
-    const height = parseFloat(heightText);
-    if (imageEl && width > 0 && height > 0) {
-      const w = width * PX_PER_UNIT;
-      const h = height * PX_PER_UNIT;
-      ctx.drawImage(imageEl, CANVAS_PX / 2 - w / 2, CANVAS_PX / 2 - h / 2, w, h);
-    }
-    for (const p of imagePorts) drawPointMarker(ctx, p, colors, true, false);
-  }, [heightText, imageEl, imagePorts, tab, widthText]);
-
-  const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setError(null);
-    // Plain FileReader/Image rather than the Tauri dialog plugin: both work inside the
-    // webview and this needs no extra capability grant.
-    const reader = new FileReader();
-    reader.onerror = () => setError("Couldn't read that file.");
-    reader.onload = () => {
-      const dataUrl = String(reader.result);
-      const img = new Image();
-      img.onerror = () => setError("Couldn't decode that image.");
-      img.onload = () => {
-        const ratio = img.naturalHeight > 0 ? img.naturalWidth / img.naturalHeight : 1;
-        setImageEl(img);
-        setImageDataUrl(dataUrl);
-        setAspect(ratio);
-        setWidthText(String(DEFAULT_IMAGE_WIDTH));
-        setHeightText(formatUnits(DEFAULT_IMAGE_WIDTH / ratio));
-      };
-      img.src = dataUrl;
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const onWidthChange = (text: string) => {
-    setWidthText(text);
-    const w = parseFloat(text);
-    if (lockAspect && aspect && Number.isFinite(w) && w > 0) setHeightText(formatUnits(w / aspect));
-  };
-
-  const onHeightChange = (text: string) => {
-    setHeightText(text);
-    const h = parseFloat(text);
-    if (lockAspect && aspect && Number.isFinite(h) && h > 0) setWidthText(formatUnits(h * aspect));
-  };
-
-  /** Click to add a port, click an existing one to remove it. Positions round to half a
-   * unit so ports land predictably on the image's edges without needing a full snapper. */
-  const onImagePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const local = screenToLocal({ x: e.clientX - rect.left, y: e.clientY - rect.top });
-    const tol = PICK_PX / PX_PER_UNIT;
-    const existing = imagePorts.find((p) => Math.hypot(p.x - local.x, p.y - local.y) <= tol);
-    if (existing) {
-      setImagePorts((prev) => prev.filter((p) => p.id !== existing.id));
-      return;
-    }
-    const id = `port${imagePortCounter.current++}`;
-    setImagePorts((prev) => [...prev, { id, x: Math.round(local.x * 2) / 2, y: Math.round(local.y * 2) / 2 }]);
-  };
+  const strokeWeights = [
+    ...[...selection.lines].map((id) => graph.lines.get(id)?.weight),
+    ...[...selection.arcs].map((id) => graph.arcs.get(id)?.weight),
+  ];
 
   // ------------------------------------------------------------------------ Persisting
 
-  /** Both tabs save the same way: write the geometry (overwriting the category's existing
-   * symbol row in place when it has one), then point the category at it. */
+  /** Writes the geometry (overwriting the category's existing symbol row in place when it has
+   * one), then points the category at it. */
   const persist = async (geometry: SymbolGeometry) => {
     setError(null);
     setSaving(true);
     try {
       const stored = await db.upsertSymbol({ id: category.symbolId ?? undefined, geometry });
-      await db.upsertCategory({ ...category, name: nameText.trim() || category.name, symbolId: stored.id });
+      await db.upsertCategory({ ...category, name: nameText.trim() || category.name, familyId, symbolId: stored.id });
       setSaving(false);
       onSaved();
       onClose();
@@ -1334,53 +1312,21 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
     }
   };
 
-  /** The symbol as the editor currently has it, or null (with `error` set) when the Image
-   * tab isn't filled in yet. Save and Export both go through this, so exporting always
-   * writes exactly what's on screen — unsaved edits included. */
-  const currentGeometry = (): SymbolGeometry | null => {
-    if (tab === 'draw') return graphToGeometry(graph, ports);
-    if (!imageDataUrl) {
-      setError('Choose an image file first.');
-      return null;
-    }
-    const width = parseFloat(widthText);
-    const height = parseFloat(heightText);
-    if (!(width > 0) || !(height > 0)) {
-      setError('Width and height must be positive numbers.');
-      return null;
-    }
-    const points: Record<string, Vec2> = {};
-    for (const p of imagePorts) points[p.id] = { x: p.x, y: p.y };
-    return {
-      points,
-      lines: [],
-      arcs: [],
-      ports: imagePorts.map((p) => p.id),
-      image: { dataUrl: imageDataUrl, width, height },
-    };
-  };
+  /** The symbol as the editor currently has it — what Save, Export and Share all write, so
+   * exporting always matches what's on screen, unsaved edits included. A picture body the
+   * symbol came in with is carried through untouched. */
+  const currentGeometry = (): SymbolGeometry | null => ({
+    ...graphToGeometry(graph, ports),
+    ...(bodyImage ? { image: bodyImage } : {}),
+  });
 
   const saveSymbol = () => {
     const geometry = currentGeometry();
     return geometry ? persist(geometry) : Promise.resolve();
   };
 
-  /** Shares the whole component as a library file — what's on screen, unsaved edits included. */
-  const runShare = async () => {
-    setError(null);
-    setNotice(null);
-    const geometry = currentGeometry();
-    if (!geometry) return;
-    try {
-      await shareComponent({ ...category, name: nameText.trim() || category.name }, geometry);
-      setNotice('Saved a component file you can send to someone.');
-    } catch (e) {
-      setError(describeError(e));
-    }
-  };
-
   const runDelete = async () => {
-    if (!window.confirm(`Delete "${category.name}" and its drawing from your library? Drawings that already use it keep their own copy. This can't be undone.`)) return;
+    setConfirmingDelete(false);
     setError(null);
     try {
       await db.deleteCategory(category.id);
@@ -1430,105 +1376,56 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
     }
   };
 
-  const drawHint =
-    tool === 'select'
-      ? 'Click to select, or drag to move (a multi-selection drags as one group). Shift/Ctrl/Cmd-click to add/remove, or drag a box around several. Text size resizes the selected labels. Ctrl/Cmd+C/V copy/paste, Ctrl/Cmd+Z/Y undo/redo.'
-      : tool === 'line'
-        ? 'Click a start point, then an end point. Escape cancels.'
-        : tool === 'arc'
-          ? 'Click start, then end, then a third point to set how far the arc bows. Escape cancels.'
-          : tool === 'point'
-            ? 'Click to place a point (snaps to the grid and to existing points).'
-            : tool === 'text'
-              ? 'Click where the label goes and type it, at the Text size set above. Enter keeps it, Escape discards it; click a label to re-edit it, then change Text size to resize it.'
-              : 'Click the centre, then a point on the circle. Escape cancels.';
-
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal-panel symbol-editor" onClick={(e) => e.stopPropagation()}>
         <div className="library-header">
-          <input
-            className="symbol-editor-name"
-            value={nameText}
-            onChange={(e) => setNameText(e.target.value)}
-            aria-label="Component name"
-            title="The component's name — saved with Save Symbol"
-          />
-          <div className="library-header-buttons">
-            <button
-              className={tab === 'draw' ? 'active' : ''}
-              onClick={() => setTab('draw')}
-              title="Draw the symbol as lines, arcs and connection ports"
-            >
-              Draw
-            </button>
-            <button
-              className={tab === 'image' ? 'active' : ''}
-              onClick={() => setTab('image')}
-              title="Use an image file as the symbol body and click its connection ports on"
-            >
-              Upload Image
-            </button>
-          </div>
+          <label className="symbol-editor-name-wrap" title="Click to rename this component — saved with Save Symbol">
+            <input
+              className="symbol-editor-name"
+              value={nameText}
+              placeholder="Component name"
+              onChange={(e) => setNameText(e.target.value)}
+              aria-label="Component name"
+            />
+            <svg className="symbol-editor-name-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M12 20h9" />
+              <path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z" />
+            </svg>
+          </label>
+          <label className="symbol-editor-family" title="Which family this component is listed under">
+            Family
+            <select value={familyId} onChange={(e) => setFamilyId(e.target.value)}>
+              {families.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.name}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
 
         {loading ? (
           <p className="library-muted">Loading symbol…</p>
-        ) : tab === 'draw' ? (
-          <>
-            <div className="symbol-editor-toolbar">
-              {(['select', 'line', 'arc', 'point', 'circle', 'text'] as DrawTool[]).map((t) => (
-                <button
-                  key={t}
-                  className={tool === t ? 'active' : ''}
-                  title={`${t[0].toUpperCase() + t.slice(1)} (${TOOL_HOTKEYS[t]})`}
-                  onClick={() => {
-                    setTool(t);
-                    cancelPending();
-                  }}
-                >
-                  {t[0].toUpperCase() + t.slice(1)}
-                </button>
-              ))}
-              {/* The Text tool's one option, so it sits with the tools rather than with the
-                  actions on the right: like the tool buttons, it says what the next click
-                  will place. It doubles as the resize control for labels already drawn —
-                  this modal has no per-entity properties panel to put one in, and a size
-                  that only applied to new labels would leave every existing label stuck at
-                  whatever it was placed at. */}
-              <label
-                className="symbol-editor-text-size"
-                title={`Label height in drawing units (${MIN_TEXT_SIZE}–${MAX_TEXT_SIZE}; a built-in symbol is about 28 units wide). Sets the next label placed, and resizes the selected ones.`}
-              >
-                Text size
-                <input
-                  type="number"
-                  step="any"
-                  min={MIN_TEXT_SIZE}
-                  max={MAX_TEXT_SIZE}
-                  value={textSizeText}
-                  onChange={(e) => setTextSizeText(e.target.value)}
-                  onBlur={commitTextSize}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') e.currentTarget.blur();
-                  }}
-                />
-              </label>
-              <span className="symbol-editor-toolbar-gap" />
-              <button onClick={togglePort} disabled={!selectedPointId} title="Mark/unmark the selected point as a connection port">
-                Toggle Port
-              </button>
-              <button onClick={deleteSelected} disabled={selectionCount(selection) === 0}>
-                Delete Selected
-              </button>
-            </div>
-            {/* Positioned wrapper purely so the inline label editor can sit over the
-                canvas at the label's own spot, the way SketchCanvas's does. */}
-            <div className="symbol-editor-canvas-wrap" style={{ width: CANVAS_PX, height: CANVAS_PX }}>
+        ) : (
+          <div className="symbol-editor-body">
+            {/* The same icon-and-shortcut tool rail the main window has, plus Port. */}
+            <ToolRailView
+              compact
+              tools={EDITOR_TOOLS}
+              active={tool}
+              onSelect={(t) => {
+                setTool(t);
+                cancelPending();
+              }}
+            />
+            {/* Positioned wrapper so the inline label editor and the properties popup can sit
+                over the canvas, the way SketchCanvas's do. */}
+            <div className="symbol-editor-canvas-wrap" style={{ width: viewPx, height: viewPx }}>
               <canvas
                 ref={drawCanvasRef}
                 className="symbol-editor-canvas"
-                style={{ width: CANVAS_PX, height: CANVAS_PX }}
+                style={{ width: viewPx, height: viewPx }}
                 onPointerDown={onDrawPointerDown}
                 onPointerMove={onDrawPointerMove}
                 onPointerUp={onDrawPointerUp}
@@ -1541,9 +1438,9 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
                   value={textEditor.value}
                   placeholder="Label…"
                   style={{
-                    left: localToScreen(textEditor.local).x,
-                    top: localToScreen(textEditor.local).y,
-                    fontSize: `${textEditor.size * PX_PER_UNIT}px`,
+                    left: localToScreen(textEditor.local).x * viewScale,
+                    top: localToScreen(textEditor.local).y * viewScale,
+                    fontSize: `${textEditor.size * PX_PER_UNIT * viewScale}px`,
                   }}
                   onChange={(e) => putTextEditor({ ...textEditor, value: e.target.value })}
                   onBlur={commitTextEditor}
@@ -1552,51 +1449,51 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
                   }}
                 />
               )}
-            </div>
-            <p className="library-muted">{drawHint}</p>
-            <p className="library-muted">
-              {ports.length} port{ports.length === 1 ? '' : 's'}
-              {ports.length > 0 ? ` (in order): ${ports.join(', ')}` : ' — mark at least one so pipes can attach.'}
-            </p>
-          </>
-        ) : (
-          <>
-            <div className="field">
-              <span>Image file</span>
-              <input type="file" accept="image/*" onChange={onFileChange} />
-            </div>
-            {imageDataUrl && (
-              <>
-                <div className="symbol-editor-size-row">
-                  <label>
-                    Width
-                    <input type="number" step="any" min="0.1" value={widthText} onChange={(e) => onWidthChange(e.target.value)} />
-                  </label>
-                  <label>
-                    Height
-                    <input type="number" step="any" min="0.1" value={heightText} onChange={(e) => onHeightChange(e.target.value)} />
-                  </label>
-                  <label className="library-spec-checkbox">
-                    <input type="checkbox" checked={lockAspect} onChange={(e) => setLockAspect(e.target.checked)} />
-                    Lock aspect
-                  </label>
+              <span className="symbol-editor-port-count">
+                {ports.length} port{ports.length === 1 ? '' : 's'}
+                {ports.length === 0 ? ' — add one with the Port tool' : ''}
+              </span>
+              {/* Properties appear only when there's something to show, like the main window's
+                  popup, so the drawing gets all the room the rest of the time. */}
+              {(selectionCount(selection) > 0 || tool === 'text') && (
+                <div className="symbol-props">
+                  {selectionCount(selection) > 0 && (
+                    <button className="props-popup-close" onClick={() => setSelection(emptySelection())} title="Close (Esc)" aria-label="Close properties">
+                      ×
+                    </button>
+                  )}
+                  <h3>Properties</h3>
+                  <p className="symbol-props-summary">{describeSelection(selection, ports)}</p>
+                  {strokeWeights.length > 0 && <WeightField value={commonWeight(strokeWeights)} onChange={applyWeight} />}
+                  {(tool === 'text' || selection.texts.size > 0) && (
+                    <label
+                      className="field"
+                      title={`Label height in drawing units (${MIN_TEXT_SIZE}–${MAX_TEXT_SIZE}; a built-in symbol is about 28 units wide). Sets the next label placed, and resizes the selected ones.`}
+                    >
+                      <span>Text size</span>
+                      <input
+                        type="number"
+                        step="any"
+                        min={MIN_TEXT_SIZE}
+                        max={MAX_TEXT_SIZE}
+                        value={textSizeText}
+                        onChange={(e) => setTextSizeText(e.target.value)}
+                        onBlur={commitTextSize}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') e.currentTarget.blur();
+                        }}
+                      />
+                    </label>
+                  )}
+                  {selectionCount(selection) > 0 && (
+                    <button className="symbol-props-button library-icon-button--danger" onClick={deleteSelected}>
+                      Delete selected
+                    </button>
+                  )}
                 </div>
-                <canvas
-                  ref={imageCanvasRef}
-                  className="symbol-editor-canvas"
-                  style={{ width: CANVAS_PX, height: CANVAS_PX }}
-                  onPointerDown={onImagePointerDown}
-                />
-                <p className="library-muted">
-                  Click the image to place a connection port; click a port again to remove it. Ports connect in the order placed.
-                </p>
-                <p className="library-muted">
-                  {imagePorts.length} port{imagePorts.length === 1 ? '' : 's'} placed. Size is in drawing units (a built-in symbol is about
-                  28 units wide).
-                </p>
-              </>
-            )}
-          </>
+              )}
+            </div>
+          </div>
         )}
 
         {error && <p className="field-error">{error}</p>}
@@ -1621,14 +1518,18 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
               Export drawing…
             </button>
             <button
+              className="symbol-editor-trash"
               disabled={saving || loading}
-              onClick={() => void runShare()}
-              title="Save this whole component (name, family and drawing) to a file you can send to someone — they add it with File ▸ Import components"
+              onClick={() => setConfirmingDelete(true)}
+              title="Delete this component from your library"
+              aria-label="Delete this component"
             >
-              Share component…
-            </button>
-            <button className="library-icon-button--danger" disabled={saving || loading} onClick={() => void runDelete()} title="Delete this component from your library">
-              Delete
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M3 6h18" />
+                <path d="M8 6V4a1 1 0 011-1h6a1 1 0 011 1v2" />
+                <path d="M6 6l1 14a1 1 0 001 1h8a1 1 0 001-1l1-14" />
+                <path d="M10 11v6M14 11v6" />
+              </svg>
             </button>
           </div>
           <button onClick={onClose}>Cancel</button>
@@ -1637,6 +1538,15 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
           </button>
         </div>
       </div>
+      {confirmingDelete && (
+        <ConfirmDialog
+          title={`Delete "${category.name}"?`}
+          message="This removes the component and its drawing from your library. Drawings that already use it keep their own copy. This can't be undone."
+          confirmLabel="Delete"
+          onConfirm={() => void runDelete()}
+          onCancel={() => setConfirmingDelete(false)}
+        />
+      )}
     </div>
   );
 }

@@ -69,6 +69,7 @@ interface ClipboardComponent {
   snapshot: ComponentSnapshot;
   tag: string;
   name?: string;
+  lineWeight?: number;
   position: Vec2;
   rotation: number;
   /** Custom label placements travel with the copy — they're relative to the instance's
@@ -91,11 +92,13 @@ interface ClipboardLine {
   startId: Id;
   endId: Id;
   axisLock: AxisLock;
+  weight?: number;
 }
 interface ClipboardArc {
   startId: Id;
   endId: Id;
   bulge: number;
+  weight?: number;
 }
 /** A copied text annotation, carried by value like everything else on this clipboard —
  * it has no id-based relationship to anything, so it needs no remapping on paste. */
@@ -167,9 +170,6 @@ interface SketchStoreState {
   componentScale: number;
   theme: Theme;
   armedComponent: ArmedComponent | null;
-  /** Whether the Library panel is shown (replaces the Properties Panel in the same
-   * sidebar slot while open). */
-  libraryPanelOpen: boolean;
   /** Last-copied selection (Ctrl/Cmd+C — components *and* any selected lines/arcs/points/text),
    * or null if nothing's been copied yet this session. Not persisted with the project — an
    * in-app clipboard, not the OS one, so paste only ever targets this same document. */
@@ -191,9 +191,6 @@ interface SketchStoreState {
   /** Loads the Component tool with a category and switches to it
    * in one step — what the Library panel's "Place" action calls. */
   armComponent: (categoryId: string) => void;
-  toggleLibraryPanel: () => void;
-  /** Shows the Library (true) or the Properties panel (false) in the sidebar. */
-  setLibraryPanelOpen: (open: boolean) => void;
   setPendingGuardedAction: (action: GuardedAction | null) => void;
   setCamera: (camera: CameraState) => void;
   setSelection: (selection: Selection) => void;
@@ -239,10 +236,16 @@ interface SketchStoreState {
     snapshot: ComponentSnapshot;
   }) => void;
   setComponentTag: (componentId: Id, tag: string) => void;
+  /** Sets the stroke thickness (px) of every selected line, arc and component — null restores
+   * the default. One undo step. */
+  setSelectionWeight: (weight: number | null) => void;
   /** Renames a placed component (a descriptive name, not its tag). An empty string
    * clears the name — see SceneGraph.setComponentName. */
   setComponentName: (componentId: Id, name: string) => void;
   setComponentRotationDeg: (componentId: Id, degrees: number) => void;
+  /** Turns every selected component by `degrees` (positive = clockwise on screen) about its own
+   * position, in one undo step. Attached pipes follow the ports. No-op with no component selected. */
+  rotateSelectedComponents: (degrees: number) => void;
   /** Puts a placed component's dragged labels back on their automatic placement (both of
    * them, or just one). No-op when nothing was moved, so it never lands an empty entry on
    * the undo stack. */
@@ -282,7 +285,6 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
   componentScale: 1,
   theme: loadInitialTheme(),
   armedComponent: null,
-  libraryPanelOpen: false,
   pendingGuardedAction: null,
   clipboard: null,
   pasteCount: 0,
@@ -293,24 +295,9 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
 
   setTool: (tool) => set({ activeTool: tool, selection: emptySelection(), armedComponent: tool === 'component' ? get().armedComponent : null }),
   armComponent: (categoryId) => set({ activeTool: 'component', armedComponent: { categoryId }, selection: emptySelection() }),
-  toggleLibraryPanel: () => set((s) => ({ libraryPanelOpen: !s.libraryPanelOpen })),
-  setLibraryPanelOpen: (open) => set({ libraryPanelOpen: open }),
   setPendingGuardedAction: (action) => set({ pendingGuardedAction: action }),
   setCamera: (camera) => set({ camera }),
-  // Selecting a point/line/arc/component (to edit its length/angle/etc. in the
-  // Properties Panel) auto-closes the Library panel if it's open, since the two share
-  // the same sidebar slot — otherwise clicking something to edit it would be hidden
-  // behind whatever the Library panel happened to be showing. Only closes on a
-  // non-empty selection: clearing a selection (Escape, deselect-click) shouldn't also
-  // yank the Library panel out from under someone actively browsing it. Placing/pasting
-  // a component sets `selection` directly via `set()` rather than through this action,
-  // so that flow (deliberately used *while* the Library panel is open) is unaffected.
-  setSelection: (selection) =>
-    set((s) => {
-      const hasSelection =
-        selection.pointIds.size + selection.lineIds.size + selection.arcIds.size + selection.componentIds.size + selection.textIds.size > 0;
-      return { selection, libraryPanelOpen: hasSelection ? false : s.libraryPanelOpen };
-    }),
+  setSelection: (selection) => set({ selection }),
   setTheme: (theme) => {
     window.localStorage?.setItem(THEME_STORAGE_KEY, theme);
     set({ theme });
@@ -469,6 +456,13 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
     get().commit(before);
   },
 
+  setSelectionWeight: (weight) => {
+    const { graph, selection } = get();
+    const before = graph.toJSON();
+    const changed = graph.setWeight({ lineIds: selection.lineIds, arcIds: selection.arcIds, componentIds: selection.componentIds }, weight);
+    if (changed) get().commit(before);
+  },
+
   setComponentName: (componentId, name) => {
     const before = get().graph.toJSON();
     get().graph.setComponentName(componentId, name);
@@ -492,6 +486,22 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
     if (!instance) return;
     const before = graph.toJSON();
     graph.moveComponent(componentId, instance.position, (degrees * Math.PI) / 180, componentScale);
+    get().commit(before);
+  },
+
+  rotateSelectedComponents: (degrees) => {
+    const { graph, selection, componentScale } = get();
+    if (selection.componentIds.size === 0) return;
+    const before = graph.toJSON();
+    const turn = (degrees * Math.PI) / 180;
+    const FULL = Math.PI * 2;
+    for (const id of selection.componentIds) {
+      const instance = graph.components.get(id);
+      if (!instance) continue;
+      // Kept in [0, 360) so repeated turns don't drift into huge or negative angles.
+      const next = (((instance.rotation + turn) % FULL) + FULL) % FULL;
+      graph.moveComponent(id, instance.position, next, componentScale);
+    }
     get().commit(before);
   },
 
@@ -530,6 +540,7 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
         snapshot: cloneSnapshot(instance.snapshot),
         tag: instance.tag,
         name: instance.name,
+        lineWeight: instance.lineWeight,
         position: { ...instance.position },
         rotation: instance.rotation,
         ...(instance.tagOffset ? { tagOffset: { ...instance.tagOffset } } : {}),
@@ -586,13 +597,13 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
     const lines: ClipboardLine[] = [];
     for (const line of graph.lines.values()) {
       if (pointIds.has(line.startId) && pointIds.has(line.endId)) {
-        lines.push({ startId: line.startId, endId: line.endId, axisLock: line.axisLock });
+        lines.push({ startId: line.startId, endId: line.endId, axisLock: line.axisLock, weight: line.weight });
       }
     }
     const arcs: ClipboardArc[] = [];
     for (const arc of graph.arcs.values()) {
       if (pointIds.has(arc.startId) && pointIds.has(arc.endId)) {
-        arcs.push({ startId: arc.startId, endId: arc.endId, bulge: arc.bulge });
+        arcs.push({ startId: arc.startId, endId: arc.endId, bulge: arc.bulge, weight: arc.weight });
       }
     }
 
@@ -630,6 +641,7 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
         // The descriptive name *is* carried verbatim — unlike the tag it's not an
         // identifier, so a copy sharing its original's name is correct, not a clash.
         name: item.name,
+        lineWeight: item.lineWeight,
         position: { x: item.position.x + offset, y: item.position.y + offset },
         rotation: item.rotation,
         tagOffset: item.tagOffset,
@@ -668,7 +680,7 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
       const startId = idMap.get(l.startId);
       const endId = idMap.get(l.endId);
       if (!startId || !endId) continue;
-      const created = graph.addLine(startId, endId, l.axisLock);
+      const created = graph.addLine(startId, endId, l.axisLock, undefined, l.weight);
       if (created) newLineIds.push(created.id);
     }
     const newArcIds: Id[] = [];
@@ -676,7 +688,7 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
       const startId = idMap.get(a.startId);
       const endId = idMap.get(a.endId);
       if (!startId || !endId) continue;
-      const created = graph.addArc(startId, endId, a.bulge);
+      const created = graph.addArc(startId, endId, a.bulge, undefined, a.weight);
       if (created) newArcIds.push(created.id);
     }
 

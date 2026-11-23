@@ -205,7 +205,7 @@ describe('selectionPointIds', () => {
 
 describe('localToScreen / screenToLocal', () => {
   it('puts the symbol origin at the canvas centre', () => {
-    expect(localToScreen({ x: 0, y: 0 })).toEqual({ x: 280, y: 280 });
+    expect(localToScreen({ x: 0, y: 0 })).toEqual({ x: 308, y: 308 });
   });
 
   it('inverts itself', () => {

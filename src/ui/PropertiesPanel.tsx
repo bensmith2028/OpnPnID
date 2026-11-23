@@ -3,6 +3,7 @@ import type { AxisLock, Id, Line } from '../types/geometry';
 import { hasCustomLabelOffset } from '../canvas/componentLabels';
 import { useSketchStore } from '../canvas/store/useSketchStore';
 import type { SceneGraph } from '../canvas/sceneGraph';
+import { WeightField, commonWeight } from './WeightField';
 
 const RAD_TO_DEG = 180 / Math.PI;
 
@@ -25,9 +26,64 @@ export function PropertiesPanel() {
     if (selection.componentIds.size === 1) return <ComponentProperties componentId={[...selection.componentIds][0]} />;
     if (selection.textIds.size === 1) return <TextProperties textId={[...selection.textIds][0]} />;
   }
+  if (total > 1) return <MultiProperties />;
   return (
     <div className="properties-panel properties-panel--empty">
       <p>Select a single point, line, arc, component, or text note to edit its properties.</p>
+    </div>
+  );
+}
+
+/** Several things selected: nothing to edit per item, but line weight applies to every line,
+ * arc and component in the selection at once. */
+function MultiProperties() {
+  useSketchStore((s) => s.version); // re-read weights after any change
+  const selection = useSketchStore((s) => s.selection);
+  const setSelectionWeight = useSketchStore((s) => s.setSelectionWeight);
+  const graph = useSketchStore.getState().graph;
+
+  const weights: (number | undefined)[] = [
+    ...[...selection.lineIds].map((id) => graph.lines.get(id)?.weight),
+    ...[...selection.arcIds].map((id) => graph.arcs.get(id)?.weight),
+    ...[...selection.componentIds].map((id) => graph.components.get(id)?.lineWeight),
+  ];
+  const total = selection.pointIds.size + selection.lineIds.size + selection.arcIds.size + selection.componentIds.size + selection.textIds.size;
+
+  return (
+    <div className="properties-panel">
+      <h3>{total} items selected</h3>
+      {selection.componentIds.size > 0 && <RotateButton />}
+      {weights.length > 0 ? (
+        <WeightField value={commonWeight(weights)} onChange={setSelectionWeight} />
+      ) : (
+        <p className="properties-panel--empty">Select a line, arc or component to change its line weight.</p>
+      )}
+    </div>
+  );
+}
+
+/** "Rotate 45°" — a circular arrow with an R inside, the same R that does it from the keyboard. */
+function RotateButton() {
+  const rotate = useSketchStore((s) => s.rotateSelectedComponents);
+  return (
+    <div className="field">
+      <span>Rotate</span>
+      <button
+        className="rotate-button"
+        onClick={() => rotate(45)}
+        title="Rotate 45° clockwise — or press R with it selected (Shift+R turns it back)"
+      >
+        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <polyline points="23 4 23 10 17 10" />
+          <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+          <text x="12" y="15.5" textAnchor="middle" fontSize="9" fontWeight="700" fill="currentColor" stroke="none">
+            R
+          </text>
+        </svg>
+        <span>
+          45° <kbd>R</kbd>
+        </span>
+      </button>
     </div>
   );
 }
@@ -118,6 +174,7 @@ function LineProperties({ lineId }: { lineId: Id }) {
   const setLineLength = useSketchStore((s) => s.setLineLength);
   const setLineAngleDeg = useSketchStore((s) => s.setLineAngleDeg);
   const setAxisLock = useSketchStore((s) => s.setAxisLock);
+  const setSelectionWeight = useSketchStore((s) => s.setSelectionWeight);
 
   const graph = useSketchStore.getState().graph;
   const line: Line | undefined = graph.lines.get(lineId);
@@ -151,6 +208,7 @@ function LineProperties({ lineId }: { lineId: Id }) {
   return (
     <div className="properties-panel">
       <h3>Line</h3>
+      <WeightField value={line.weight} onChange={setSelectionWeight} />
       <label className="field">
         <span>Length</span>
         <input
@@ -205,6 +263,7 @@ function ArcProperties({ arcId }: { arcId: Id }) {
   const setArcBulge = useSketchStore((s) => s.setArcBulge);
   const setTangentStart = useSketchStore((s) => s.setTangentStart);
   const setTangentEnd = useSketchStore((s) => s.setTangentEnd);
+  const setSelectionWeight = useSketchStore((s) => s.setSelectionWeight);
 
   const graph = useSketchStore.getState().graph;
   const arc = graph.arcs.get(arcId);
@@ -234,6 +293,7 @@ function ArcProperties({ arcId }: { arcId: Id }) {
   return (
     <div className="properties-panel">
       <h3>Arc</h3>
+      <WeightField value={arc.weight} onChange={setSelectionWeight} />
       <label className="field">
         <span>Curvature (bulge){isTangentLocked ? ' — tangent-locked' : ''}</span>
         {isTangentLocked ? (
@@ -287,6 +347,7 @@ function ComponentProperties({ componentId }: { componentId: Id }) {
   const setComponentName = useSketchStore((s) => s.setComponentName);
   const setComponentRotationDeg = useSketchStore((s) => s.setComponentRotationDeg);
   const resetComponentLabelOffsets = useSketchStore((s) => s.resetComponentLabelOffsets);
+  const setSelectionWeight = useSketchStore((s) => s.setSelectionWeight);
 
   const graph = useSketchStore.getState().graph;
   const instance = graph.components.get(componentId);
@@ -347,6 +408,7 @@ function ComponentProperties({ componentId }: { componentId: Id }) {
           onKeyDown={onEnter(commitName)}
         />
       </label>
+      <RotateButton />
       <label className="field">
         <span>Rotation (°)</span>
         <input
@@ -358,6 +420,8 @@ function ComponentProperties({ componentId }: { componentId: Id }) {
           onKeyDown={onEnter(commitRotation)}
         />
       </label>
+
+      <WeightField value={instance.lineWeight} onChange={setSelectionWeight} />
 
       {/* Only offered once a label has actually been dragged — there's nothing to reset
           otherwise, and a permanently-disabled button would just be noise. */}

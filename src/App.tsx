@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { SketchCanvas } from './canvas/SketchCanvas';
 import { useSketchStore } from './canvas/store/useSketchStore';
+import { PropertiesPopup } from './ui/PropertiesPopup';
 import { SidePanel } from './ui/SidePanel';
 import { Toaster } from './ui/Toaster';
 import { ToolRail } from './ui/ToolRail';
@@ -35,6 +36,7 @@ export default function App() {
       <div className="app-body">
         <ToolRail />
         <SketchCanvas />
+        <PropertiesPopup />
         <SidePanel />
       </div>
       <Toaster />

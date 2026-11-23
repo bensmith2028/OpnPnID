@@ -294,26 +294,6 @@ describe('armComponent', () => {
   });
 });
 
-describe('setSelection auto-closing the Library panel', () => {
-  it('closes the Library panel when selecting something non-empty', () => {
-    useSketchStore.setState({ libraryPanelOpen: true });
-    useSketchStore.getState().setSelection({ pointIds: new Set(), lineIds: new Set(['ln1']), arcIds: new Set(), componentIds: new Set(), textIds: new Set() });
-    expect(useSketchStore.getState().libraryPanelOpen).toBe(false);
-  });
-
-  it('leaves the Library panel open when the resulting selection is empty', () => {
-    useSketchStore.setState({ libraryPanelOpen: true });
-    useSketchStore.getState().setSelection({ pointIds: new Set(), lineIds: new Set(), arcIds: new Set(), componentIds: new Set(), textIds: new Set() });
-    expect(useSketchStore.getState().libraryPanelOpen).toBe(true);
-  });
-
-  it('does not reopen the Library panel when it is already closed', () => {
-    useSketchStore.setState({ libraryPanelOpen: false });
-    useSketchStore.getState().setSelection({ pointIds: new Set(['pt1']), lineIds: new Set(), arcIds: new Set(), componentIds: new Set(), textIds: new Set() });
-    expect(useSketchStore.getState().libraryPanelOpen).toBe(false);
-  });
-});
-
 describe('selectAll', () => {
   it('selects every point, line, arc, component and text annotation in the document', () => {
     const { placeComponent, graph } = useSketchStore.getState();
@@ -329,14 +309,6 @@ describe('selectAll', () => {
     expect(selection.pointIds.size).toBe(graph.points.size);
     expect(selection.lineIds.size).toBe(graph.lines.size);
     expect(selection.textIds.size).toBe(1);
-  });
-
-  it('closes the Library panel, same as any other non-empty selection', () => {
-    useSketchStore.setState({ libraryPanelOpen: true });
-    useSketchStore.getState().placeComponent({ categoryId: 'cat1', position: { x: 0, y: 0 }, tag: 'V-101', snapshot: sampleSnapshot() });
-    useSketchStore.setState({ libraryPanelOpen: true }); // placeComponent bypasses the auto-close; reset for this test
-    useSketchStore.getState().selectAll();
-    expect(useSketchStore.getState().libraryPanelOpen).toBe(false);
   });
 });
 

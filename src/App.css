@@ -697,7 +697,12 @@ body {
 
 /* Wider than the default modal so the fixed 480px symbol canvas fits with padding. */
 .symbol-editor {
-  width: 528px;
+  /* Sized by its content — the canvas is fitted to the window in JS (fitViewPx), so the edit
+     window never needs scrollbars. */
+  width: auto;
+  max-width: calc(100vw - 24px);
+  max-height: none;
+  overflow: visible;
 }
 
 .symbol-editor .library-header {
@@ -828,13 +833,9 @@ body {
    the Cancel/Save pair the footer otherwise is. */
 .symbol-editor-footer-files {
   display: flex;
-  flex: 1 1 100%;
   flex-wrap: wrap;
   gap: 6px;
-}
-
-.symbol-editor-footer-files .library-icon-button--danger {
-  margin-left: auto;
+  margin-right: auto;
 }
 
 .symbol-editor-footer button {
@@ -1115,21 +1116,55 @@ body {
 
 .canvas-hint {
   position: absolute;
-  bottom: 14px;
+  top: 12px;
   left: 50%;
   transform: translateX(-50%);
-  padding: 6px 14px;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px 7px 14px;
+  background: var(--accent);
+  color: var(--accent-contrast);
   border-radius: 999px;
-  color: var(--text-muted);
-  font-size: 12px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  font-size: 13px;
   white-space: nowrap;
   pointer-events: none;
 }
 
 .canvas-hint strong {
-  color: var(--text);
+  font-weight: 700;
+}
+
+.canvas-hint-keys {
+  opacity: 0.75;
+  font-size: 12px;
+}
+
+.canvas-hint-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-contrast);
+  animation: hint-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes hint-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.canvas-hint button {
+  pointer-events: auto;
+  padding: 3px 12px;
+  background: var(--accent-contrast);
+  color: var(--accent);
+  border: none;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 /* ---------------------------------------------------------------------------------
@@ -1201,26 +1236,44 @@ body {
   border-color: var(--accent);
 }
 
-.symbol-editor-name {
+.symbol-editor-name-wrap {
+  position: relative;
+  display: flex;
   flex: 1 1 200px;
   min-width: 0;
+  align-items: center;
+}
+
+.symbol-editor-name {
+  width: 100%;
   font-size: 15px;
   font-weight: 600;
   color: var(--text);
-  background: transparent;
-  border: 1px solid transparent;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  padding: 4px 6px;
+  padding: 5px 30px 5px 8px;
+  cursor: text;
 }
 
 .symbol-editor-name:hover {
-  border-color: var(--border);
+  border-color: var(--text-muted);
 }
 
 .symbol-editor-name:focus {
   outline: none;
-  background: var(--bg-input);
   border-color: var(--accent);
+}
+
+.symbol-editor-name-icon {
+  position: absolute;
+  right: 9px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.symbol-editor-name:focus + .symbol-editor-name-icon {
+  color: var(--accent);
 }
 
 .toaster {
@@ -1249,8 +1302,398 @@ body {
   border-left-color: var(--error);
 }
 
-/* Short windows: the edit view scrolls instead of clipping its Save button. */
-.modal-panel.symbol-editor {
-  max-height: calc(100vh - 24px);
-  overflow-y: auto;
+
+/* Line weight control (Properties panels) */
+.weight-row {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.weight-row input {
+  width: 68px;
+  flex: 0 0 auto;
+}
+
+
+/* Edit view: canvas on the left, Properties on the right */
+.symbol-editor-body {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.symbol-editor-main {
+  flex: 0 0 auto;
+}
+
+.symbol-props {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 5;
+  width: 210px;
+  padding: 12px 14px 8px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+/* The one destructive action for the whole component, kept apart from everything else at the
+   bottom of the column, and quiet until hovered. */
+.symbol-props-delete {
+  margin-top: auto;
+  align-self: flex-start;
+  padding: 4px 0;
+  background: transparent;
+  border: none;
+  color: var(--error);
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0.8;
+}
+
+.symbol-props-delete:hover:not(:disabled) {
+  opacity: 1;
+  text-decoration: underline;
+}
+
+.symbol-props h3 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.symbol-props-summary,
+.symbol-props-ports {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.symbol-props-button {
+  align-self: flex-start;
+  background: var(--bg-button);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  margin-bottom: 12px;
+}
+
+.symbol-editor-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--border);
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.symbol-editor-family {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.symbol-editor-family select {
+  background: var(--bg-input);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-size: 12px;
+  max-width: 150px;
+}
+
+/* Library tree: families as folding groups, components indented beneath */
+.library-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.library-link {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 0;
+}
+
+.library-link:hover:not(:disabled) {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+.library-toolbar .library-gear {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 6px;
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.library-toolbar .library-gear:hover,
+.library-toolbar .library-gear.active {
+  color: var(--text);
+  background: var(--bg-button-hover);
+}
+
+.library-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.library-family-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 4px;
+  background: transparent;
+  color: var(--text);
+  border: none;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.library-family-header:hover {
+  background: var(--bg-button-hover);
+}
+
+.library-chevron {
+  width: 12px;
+  color: var(--text-muted);
+}
+
+.library-family-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.library-family-body {
+  margin: 2px 0 6px 11px;
+  padding-left: 10px;
+  border-left: 1px solid var(--border);
+}
+
+/* The same tool rail, inside the edit window: no panel chrome, tighter spacing */
+.tool-rail--compact {
+  width: 56px;
+  padding: 0;
+  gap: 2px;
+  background: transparent;
+  border-right: none;
+}
+
+.tool-rail--compact .tool-button {
+  padding: 6px 0 4px;
+}
+
+/* Library is now the whole sidebar (no tabs), and Properties is a popup beside it */
+.side-panel {
+  overflow: hidden;
+}
+
+.library-toolbar h3 {
+  margin: 0;
+}
+
+.app-body {
+  position: relative;
+}
+
+.props-popup {
+  position: absolute;
+  top: 12px;
+  right: calc(320px + 12px);
+  z-index: 20;
+  width: 250px;
+  max-height: calc(100% - 24px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+.props-popup .properties-panel {
+  padding-top: 14px;
+}
+
+.props-popup-close {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  z-index: 1;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: transparent;
+  color: var(--text-muted);
+  border: none;
+  border-radius: 4px;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.props-popup-close:hover {
+  background: var(--bg-button-hover);
+  color: var(--text);
+}
+
+/* Edit view: port count readout on the canvas, trash button, confirm dialog */
+.symbol-editor-canvas-wrap {
+  position: relative;
+}
+
+.symbol-editor-port-count {
+  position: absolute;
+  left: 8px;
+  bottom: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.symbol-editor-footer .symbol-editor-trash {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 9px;
+  color: var(--error);
+  border-color: var(--error);
+}
+
+.symbol-editor-footer .symbol-editor-trash:hover:not(:disabled) {
+  background: var(--error);
+  color: var(--accent-contrast);
+}
+
+.confirm-dialog {
+  width: 380px;
+}
+
+.confirm-dialog h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.confirm-dialog p {
+  margin: 0 0 14px;
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.confirm-dialog .unsaved-actions button.confirm-danger {
+  background: var(--error);
+  color: var(--accent-contrast);
+  border-color: var(--error);
+}
+
+/* Library: which component is loaded for placing */
+.library-list-row.is-armed .library-list-name {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-color: var(--accent);
+}
+
+.library-list-name {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.library-list-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.library-armed-badge {
+  flex-shrink: 0;
+  padding: 1px 8px;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.library-placing {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.library-placing button {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border: none;
+  border-radius: 999px;
+  padding: 3px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* Rotate button: circular arrow with R inside, plus the key hint */
+.rotate-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  align-self: flex-start;
+  padding: 4px 10px 4px 6px;
+  background: var(--bg-button);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.rotate-button:hover {
+  background: var(--bg-button-hover);
+  border-color: var(--accent);
+}
+
+.rotate-button kbd {
+  margin-left: 2px;
+  padding: 0 5px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 11px;
 }

@@ -1,5 +1,5 @@
 import { symbolBoundingRadius } from '../library/builtinSymbols';
-import type { ComponentInstance, Selection, TextAnnotation, Vec2 } from '../types/geometry';
+import { type ComponentInstance, DEFAULT_LINE_WEIGHT, type Selection, type TextAnnotation, type Vec2 } from '../types/geometry';
 import {
   COMPONENT_LABEL_KINDS,
   componentLabelAnchor,
@@ -102,6 +102,12 @@ export interface RenderParams {
   requestRedraw?: () => void;
 }
 
+/** The pixel width to stroke a line, arc or symbol stroke with: its own weight (or the
+ * default), a touch heavier when selected so the highlight reads even in the same colour. */
+export function strokeWidth(weight: number | undefined, selected: boolean): number {
+  return (weight ?? DEFAULT_LINE_WEIGHT) + (selected ? 0.5 : 0);
+}
+
 export function render(params: RenderParams) {
   const { ctx, size, camera, graph, selection, gridSize, gridVisible, interaction, theme, componentScale, requestRedraw } = params;
   const colors = paletteFor(theme);
@@ -124,7 +130,7 @@ export function render(params: RenderParams) {
     const sb = worldToScreen(b, camera, size);
     const selected = selection.lineIds.has(line.id);
     ctx.strokeStyle = selected ? colors.lineSelected : colors.line;
-    ctx.lineWidth = selected ? 2.5 : 2;
+    ctx.lineWidth = strokeWidth(line.weight, selected);
     ctx.beginPath();
     ctx.moveTo(sa.x, sa.y);
     ctx.lineTo(sb.x, sb.y);
@@ -139,7 +145,7 @@ export function render(params: RenderParams) {
     if (!a || !b) continue;
     const selected = selection.arcIds.has(arc.id);
     ctx.strokeStyle = selected ? colors.lineSelected : colors.line;
-    ctx.lineWidth = selected ? 2.5 : 2;
+    ctx.lineWidth = strokeWidth(arc.weight, selected);
     strokeArc(ctx, graph.getArcGeometry(arc), a, b, camera, size);
   }
 
@@ -411,14 +417,16 @@ function drawComponentBody(
   }
 
   ctx.strokeStyle = selected ? colors.lineSelected : colors.line;
-  ctx.lineWidth = selected ? 2.5 : 2;
 
-  for (const [aId, bId] of symbol.lines) {
+  // A component-level thickness (set from its Properties) overrides whatever the symbol's
+  // own strokes specify; otherwise each stroke uses the weight it was drawn with.
+  for (const [aId, bId, weight] of symbol.lines) {
     const aLocal = symbol.points[aId];
     const bLocal = symbol.points[bId];
     if (!aLocal || !bLocal) continue;
     const sa = worldToScreen(symbolPointToWorld(aLocal, instance, componentScale), camera, size);
     const sb = worldToScreen(symbolPointToWorld(bLocal, instance, componentScale), camera, size);
+    ctx.lineWidth = strokeWidth(instance.lineWeight ?? weight, selected);
     ctx.beginPath();
     ctx.moveTo(sa.x, sa.y);
     ctx.lineTo(sb.x, sb.y);
@@ -431,6 +439,7 @@ function drawComponentBody(
     if (!aLocal || !bLocal) continue;
     const aWorld = symbolPointToWorld(aLocal, instance, componentScale);
     const bWorld = symbolPointToWorld(bLocal, instance, componentScale);
+    ctx.lineWidth = strokeWidth(instance.lineWeight ?? arc.weight, selected);
     strokeArc(ctx, arcGeometry(aWorld, bWorld, arc.bulge), aWorld, bWorld, camera, size);
   }
 

@@ -123,9 +123,9 @@ export class SceneGraph {
   }
 
   /** Creates a line between two existing points. Does not create points. */
-  addLine(startId: Id, endId: Id, axisLock: AxisLock = null, id: Id = nextId('ln')): Line | null {
+  addLine(startId: Id, endId: Id, axisLock: AxisLock = null, id: Id = nextId('ln'), weight?: number): Line | null {
     if (startId === endId) return null; // degenerate
-    const line: Line = { id, startId, endId, axisLock };
+    const line: Line = { id, startId, endId, axisLock, ...(weight !== undefined ? { weight } : {}) };
     this.lines.set(id, line);
     this.touch(startId, id);
     this.touch(endId, id);
@@ -133,9 +133,9 @@ export class SceneGraph {
   }
 
   /** Creates an arc between two existing points. Does not create points. */
-  addArc(startId: Id, endId: Id, bulge: number, id: Id = nextId('arc')): Arc | null {
+  addArc(startId: Id, endId: Id, bulge: number, id: Id = nextId('arc'), weight?: number): Arc | null {
     if (startId === endId) return null; // degenerate
-    const arc: Arc = { id, startId, endId, bulge };
+    const arc: Arc = { id, startId, endId, bulge, ...(weight !== undefined ? { weight } : {}) };
     this.arcs.set(id, arc);
     this.touch(startId, id);
     this.touch(endId, id);
@@ -380,11 +380,11 @@ export class SceneGraph {
   splitLine(lineId: Id, at: Vec2): Point | null {
     const line = this.lines.get(lineId);
     if (!line) return null;
-    const { startId, endId, axisLock } = line;
+    const { startId, endId, axisLock, weight } = line;
     this.removeLine(lineId);
     const mid = this.addPoint(at.x, at.y);
-    this.addLine(startId, mid.id, axisLock);
-    this.addLine(mid.id, endId, axisLock);
+    this.addLine(startId, mid.id, axisLock, undefined, weight);
+    this.addLine(mid.id, endId, axisLock, undefined, weight);
     return mid;
   }
 
@@ -415,8 +415,8 @@ export class SceneGraph {
 
     this.removeArc(arcId);
     const mid = this.addPoint(splitPos.x, splitPos.y);
-    this.addArc(arc.startId, mid.id, bulge1);
-    this.addArc(mid.id, arc.endId, bulge2);
+    this.addArc(arc.startId, mid.id, bulge1, undefined, arc.weight);
+    this.addArc(mid.id, arc.endId, bulge2, undefined, arc.weight);
     return mid;
   }
 
@@ -469,7 +469,8 @@ export class SceneGraph {
 
     this.removePoint(pointId); // now unreferenced
 
-    const arc = this.addArc(pA.id, pB.id, 1 /* placeholder, corrected below */)!;
+    // The rounded corner takes on the pipe's thickness.
+    const arc = this.addArc(pA.id, pB.id, 1 /* placeholder, corrected below */, undefined, lineA.weight)!;
     arc.tangentStart = { edgeId: lineA.id };
     arc.tangentEnd = { edgeId: lineB.id };
     this.enforceTangent(arc);
@@ -489,6 +490,8 @@ export class SceneGraph {
     /** Optional descriptive name — only ever set by a caller reinstating one (paste); a
      * freshly placed component starts unnamed. */
     name?: string;
+    /** Optional stroke-thickness override — like `name`, only set when reinstating one (paste). */
+    lineWeight?: number;
     position: Vec2;
     rotation: number;
     /** Optional custom label placements — like `name`, only ever set by a caller
@@ -515,6 +518,7 @@ export class SceneGraph {
       categoryId: params.categoryId,
       tag: params.tag,
       ...(params.name ? { name: params.name } : {}),
+      ...(params.lineWeight !== undefined ? { lineWeight: params.lineWeight } : {}),
       ...(params.tagOffset ? { tagOffset: params.tagOffset } : {}),
       ...(params.nameOffset ? { nameOffset: params.nameOffset } : {}),
       position: params.position,
@@ -581,6 +585,30 @@ export class SceneGraph {
       connections: c.connections.map((cc) => ({ ...cc })),
       snapshot: this.cloneSnapshot(c.snapshot),
     };
+  }
+
+  /** Sets the stroke thickness of the given lines, arcs and components (null restores the
+   * default). Purely cosmetic, so nothing else needs to follow. Returns whether anything
+   * actually changed, so callers can skip a no-op undo entry. */
+  setWeight(ids: { lineIds?: Iterable<Id>; arcIds?: Iterable<Id>; componentIds?: Iterable<Id> }, weight: number | null): boolean {
+    const next = weight === null ? undefined : weight;
+    let changed = false;
+    const apply = (item: { weight?: number } | undefined) => {
+      if (!item || item.weight === next) return;
+      if (next === undefined) delete item.weight;
+      else item.weight = next;
+      changed = true;
+    };
+    for (const id of ids.lineIds ?? []) apply(this.lines.get(id));
+    for (const id of ids.arcIds ?? []) apply(this.arcs.get(id));
+    for (const id of ids.componentIds ?? []) {
+      const c = this.components.get(id);
+      if (!c || c.lineWeight === next) continue;
+      if (next === undefined) delete c.lineWeight;
+      else c.lineWeight = next;
+      changed = true;
+    }
+    return changed;
   }
 
   setComponentTag(id: Id, tag: string) {
@@ -668,9 +696,9 @@ export class SceneGraph {
   static fromJSON(json: SceneGraphJSON): SceneGraph {
     const g = new SceneGraph();
     for (const p of json.points) g.addPoint(p.x, p.y, p.id);
-    for (const l of json.lines) g.addLine(l.startId, l.endId, l.axisLock, l.id);
+    for (const l of json.lines) g.addLine(l.startId, l.endId, l.axisLock, l.id, l.weight);
     for (const a of json.arcs ?? []) {
-      const created = g.addArc(a.startId, a.endId, a.bulge, a.id);
+      const created = g.addArc(a.startId, a.endId, a.bulge, a.id, a.weight);
       if (created) {
         if (a.tangentStart) created.tangentStart = a.tangentStart;
         if (a.tangentEnd) created.tangentEnd = a.tangentEnd;

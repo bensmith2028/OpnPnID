@@ -26,6 +26,8 @@ export function CategorySection({ familyId }: { familyId: string }) {
   const [editing, setEditing] = useState<db.Category | null>(null);
 
   const armComponent = useSketchStore((s) => s.armComponent);
+  /** The component currently loaded for placing, so its row can say so. */
+  const armedId = useSketchStore((s) => s.armedComponent?.categoryId ?? null);
 
   const refresh = async () => setCategories(await db.listCategories(familyId));
 
@@ -70,9 +72,15 @@ export function CategorySection({ familyId }: { familyId: string }) {
       <ul className="library-list">
         {categories.map((c) => (
           <li key={c.id}>
-            <div className="library-list-row">
-              <button className="library-list-name" onClick={() => armComponent(c.id)} title="Place this component on the canvas">
-                {c.name}
+            <div className={`library-list-row${armedId === c.id ? ' is-armed' : ''}`}>
+              <button
+                className="library-list-name"
+                onClick={() => armComponent(c.id)}
+                title={armedId === c.id ? 'Ready to place — click the canvas' : 'Pick this component, then click the canvas to place it'}
+                aria-pressed={armedId === c.id}
+              >
+                <span className="library-list-label">{c.name}</span>
+                {armedId === c.id && <span className="library-armed-badge">Ready to place</span>}
               </button>
               <button className="library-icon-button" onClick={() => setEditing(c)} title={`Edit ${c.name} — drawing, name, connection ports`} aria-label={`Edit ${c.name}`}>
                 {PENCIL}

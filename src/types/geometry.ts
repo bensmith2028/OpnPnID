@@ -22,11 +22,18 @@ export interface Point {
  */
 export type AxisLock = 'H' | 'V' | null;
 
+/** Stroke thickness, in screen pixels (so it reads the same at any zoom, like every other
+ * line in the app). Absent means DEFAULT_LINE_WEIGHT. */
+export const DEFAULT_LINE_WEIGHT = 2;
+export const MIN_LINE_WEIGHT = 0.5;
+export const MAX_LINE_WEIGHT = 12;
+
 export interface Line {
   id: Id;
   startId: Id;
   endId: Id;
   axisLock: AxisLock;
+  weight?: number;
 }
 
 /** A one-way "this endpoint's tangent direction is locked to match that edge's" relation.
@@ -48,6 +55,7 @@ export interface Arc {
   startId: Id;
   endId: Id;
   bulge: number;
+  weight?: number;
   tangentStart?: TangentRef;
   tangentEnd?: TangentRef;
 }
@@ -84,7 +92,12 @@ export interface SymbolArc {
   a: string;
   b: string;
   bulge: number;
+  /** Stroke thickness in screen pixels; absent means DEFAULT_LINE_WEIGHT. */
+  weight?: number;
 }
+
+/** A symbol's line: its two point ids, plus an optional stroke thickness. */
+export type SymbolLine = [string, string, number?];
 
 /** A text label drawn as part of a symbol's body ("NC", "PSV", a size marking), in the
  * same unscaled local coordinates as `SymbolGeometry.points` — `x`/`y` is the label's
@@ -128,7 +141,7 @@ export interface SymbolImage {
  */
 export interface SymbolGeometry {
   points: Record<string, Vec2>;
-  lines: [string, string][];
+  lines: SymbolLine[];
   arcs: SymbolArc[];
   ports: string[];
   image?: SymbolImage;
@@ -161,6 +174,9 @@ export interface ComponentInstance {
    * (so older project files load unchanged, and the canvas stays uncluttered by default)
    * — see SceneGraph.setComponentName. */
   name?: string;
+  /** When set, every stroke of this component's symbol is drawn at this thickness instead of
+   * the weights the symbol itself specifies. */
+  lineWeight?: number;
   position: Vec2;
   rotation: number;
   /** Where the `tag` / `name` label sits relative to `position`, in world units, once the
