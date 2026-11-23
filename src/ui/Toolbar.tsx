@@ -1,24 +1,27 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { MIN_SNAP_THRESHOLD_PX, useSketchStore } from '../canvas/store/useSketchStore';
 import { exportBomDetailed, exportBomSummary } from '../io/bomExport';
 import { exportPdf } from '../io/pdfExport';
-import { saveProject, saveProjectAs } from '../io/projectIO';
+import { saveProject } from '../io/projectIO';
 import { describeError } from '../library/errors';
+import { Menu, MenuItem, MenuSeparator } from './Menu';
 import { guardUnsaved } from './unsavedGuard';
 
 /** Every file action (open/save/export) is a fire-and-forget async call from a plain
  * button — this runs it and surfaces a failure via a plain alert. There's no existing
- * lightweight toast/notification host in this codebase (the Library panels' inline
- * field-error text needs a persistent host component that doesn't fit a one-off Toolbar
- * action), so an alert is the simplest thing that reliably gets a failure — including
- * "that file isn't an OpnPnID project" on an import — in front of the user. */
+ * lightweight toast/notification host in this codebase, so an alert is the simplest thing
+ * that reliably gets a failure — including "that file isn't an OpnPnID project" on an
+ * open — in front of the user. */
 function runFileAction(fn: () => Promise<void>) {
   fn().catch((e) => window.alert(describeError(e)));
 }
 
-export function Toolbar() {
-  const activeTool = useSketchStore((s) => s.activeTool);
-  const setTool = useSketchStore((s) => s.setTool);
+const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+const MOD = isMac ? '⌘' : 'Ctrl+';
+
+/** The slim bar across the top: the app name and file, the File and View menus, and
+ * undo/redo. Drawing tools live in the ToolRail down the left side. */
+export function TopBar() {
   const canUndo = useSketchStore((s) => s.past.length > 0);
   const canRedo = useSketchStore((s) => s.future.length > 0);
   const undo = useSketchStore((s) => s.undo);
@@ -27,89 +30,61 @@ export function Toolbar() {
   const dirty = useSketchStore((s) => s.dirty);
   const theme = useSketchStore((s) => s.theme);
   const toggleTheme = useSketchStore((s) => s.toggleTheme);
-  const libraryPanelOpen = useSketchStore((s) => s.libraryPanelOpen);
-  const toggleLibraryPanel = useSketchStore((s) => s.toggleLibraryPanel);
 
   const fileName = filePath ? filePath.split(/[\\/]/).pop() : 'Untitled';
 
+  // Cmd/Ctrl+S saves. Without this the browser would offer to save the web page itself.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        runFileAction(saveProject);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
   return (
     <div className="toolbar">
+      <div className="toolbar-brand">OpnPnID</div>
+      <Menu label="File">
+        {() => (
+          <>
+            <MenuItem onClick={() => runFileAction(() => guardUnsaved('new'))}>New drawing</MenuItem>
+            <MenuItem onClick={() => runFileAction(() => guardUnsaved('open'))}>Open…</MenuItem>
+            <MenuItem onClick={() => runFileAction(saveProject)} hint={`${MOD}S`}>
+              Save
+            </MenuItem>
+            <MenuSeparator />
+            <MenuItem onClick={() => runFileAction(exportPdf)}>Export PDF</MenuItem>
+            <MenuItem onClick={() => runFileAction(exportBomDetailed)}>Export parts list (every component)</MenuItem>
+            <MenuItem onClick={() => runFileAction(exportBomSummary)}>Export parts list (counts)</MenuItem>
+          </>
+        )}
+      </Menu>
+      <Menu label="View" keepOpen>
+        {() => (
+          <div className="menu-form">
+            <GridControls />
+            <MenuSeparator />
+            <button className="menu-item" onClick={toggleTheme} title="Print/PDF export is always light">
+              <span>{theme === 'dark' ? '🌙 Dark theme' : '☀️ Light theme'}</span>
+              <span className="menu-hint">switch</span>
+            </button>
+          </div>
+        )}
+      </Menu>
       <div className="toolbar-group">
-        <button className={activeTool === 'select' ? 'active' : ''} onClick={() => setTool('select')} title="Select (V)">
-          Select
-        </button>
-        <button className={activeTool === 'line' ? 'active' : ''} onClick={() => setTool('line')} title="Line (L)">
-          Line
-        </button>
-        <button className={activeTool === 'arc' ? 'active' : ''} onClick={() => setTool('arc')} title="Arc (A) — hold Shift on a click to snap tangent to a connected line/arc">
-          Arc
-        </button>
-        <button className={activeTool === 'point' ? 'active' : ''} onClick={() => setTool('point')} title="Point (P)">
-          Point
-        </button>
-        <button className={activeTool === 'circle' ? 'active' : ''} onClick={() => setTool('circle')} title="Circle (C)">
-          Circle
-        </button>
-        <button
-          className={activeTool === 'text' ? 'active' : ''}
-          onClick={() => setTool('text')}
-          title="Text (T) — click where the note goes and type it; click an existing note to re-edit it"
-        >
-          Text
-        </button>
-      </div>
-      <div className="toolbar-group">
-        <button className={libraryPanelOpen ? 'active' : ''} onClick={toggleLibraryPanel} title="Browse/place components and manage the library">
-          Library
-        </button>
-      </div>
-      <div className="toolbar-group">
-        <button onClick={undo} disabled={!canUndo} title="Undo (Ctrl+Z)">
+        <button onClick={undo} disabled={!canUndo} title={`Undo (${MOD}Z)`}>
           Undo
         </button>
-        <button onClick={redo} disabled={!canRedo} title="Redo (Ctrl+Shift+Z)">
+        <button onClick={redo} disabled={!canRedo} title={`Redo (${MOD}Shift+Z)`}>
           Redo
         </button>
       </div>
-      <div className="toolbar-group">
-        {/* Both replace the current drawing outright, so they go through the same
-            unsaved-changes prompt a close/quit does — see ui/unsavedGuard.ts. */}
-        <button onClick={() => runFileAction(() => guardUnsaved('new'))} title="Start an empty drawing">
-          New
-        </button>
-        <button
-          onClick={() => runFileAction(() => guardUnsaved('open'))}
-          title="Open a project file (.pnid.json) — including one exported from another machine"
-        >
-          Open
-        </button>
-        <button onClick={() => runFileAction(saveProject)} title="Save the whole drawing to its project file (.pnid.json)">
-          Save
-        </button>
-        <button
-          onClick={() => runFileAction(saveProjectAs)}
-          title="Export the whole drawing to a new project file (.pnid.json), openable in any other instance of OpnPnID"
-        >
-          Save As
-        </button>
-      </div>
-      <div className="toolbar-group">
-        <button onClick={() => runFileAction(exportPdf)} title="Export the current schematic as a PDF (always light theme)">
-          Export PDF
-        </button>
-        <button onClick={() => runFileAction(exportBomDetailed)} title="Export a Bill of Materials CSV with one row per placed component">
-          Export BOM (Detailed)
-        </button>
-        <button onClick={() => runFileAction(exportBomSummary)} title="Export a Bill of Materials CSV grouped by part, with quantities">
-          Export BOM (Summary)
-        </button>
-      </div>
-      <GridControls />
       <div className="toolbar-spacer" />
-      <button onClick={toggleTheme} title="Toggle light/dark theme (print/PDF export will always use light)">
-        {theme === 'dark' ? '🌙 Dark' : '☀️ Light'}
-      </button>
-      <div className="toolbar-filename">
+      <div className="toolbar-filename" title={dirty ? 'Unsaved changes — use File ▸ Save' : undefined}>
         {fileName}
         {dirty ? ' •' : ''}
       </div>

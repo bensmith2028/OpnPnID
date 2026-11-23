@@ -78,7 +78,6 @@ export function LibraryPanel() {
   return (
     <div className="properties-panel library-panel">
       <div className="library-header">
-        <h3>Component Library</h3>
         <div className="library-header-buttons">
           <button
             className={editMode ? 'active' : ''}

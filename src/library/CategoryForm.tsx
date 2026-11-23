@@ -124,21 +124,23 @@ export function CategorySection({ familyId, editMode }: { familyId: string; edit
           </li>
         ))}
       </ul>
-      <div className="library-add-row library-add-row--wrap">
-        <input placeholder="Name (e.g. Solenoid 2-Way Valve)" value={name} onChange={(e) => setName(e.target.value)} />
-        <input placeholder="Subtype (e.g. 2-way)" value={subtype} onChange={(e) => setSubtype(e.target.value)} />
-        <input placeholder="Actuation (optional)" value={actuation} onChange={(e) => setActuation(e.target.value)} />
-        <input
-          type="number"
-          min="1"
-          placeholder="Ports"
-          value={portCount}
-          onChange={(e) => setPortCount(e.target.value)}
-          className="library-port-count-input"
-          title="Only used for the fallback placeholder symbol — hand-built symbols declare their own port count"
-        />
-        <button onClick={() => void addCategory()}>Add Component</button>
-      </div>
+      {editMode && (
+        <div className="library-add-row library-add-row--wrap">
+          <input placeholder="Name (e.g. Solenoid 2-Way Valve)" value={name} onChange={(e) => setName(e.target.value)} />
+          <input placeholder="Subtype (e.g. 2-way)" value={subtype} onChange={(e) => setSubtype(e.target.value)} />
+          <input placeholder="Actuation (optional)" value={actuation} onChange={(e) => setActuation(e.target.value)} />
+          <input
+            type="number"
+            min="1"
+            placeholder="Ports"
+            value={portCount}
+            onChange={(e) => setPortCount(e.target.value)}
+            className="library-port-count-input"
+            title="Only used for the fallback placeholder symbol — hand-built symbols declare their own port count"
+          />
+          <button onClick={() => void addCategory()}>Add Component</button>
+        </div>
+      )}
       {error && <p className="field-error">{error}</p>}
       {symbolEditorFor && (
         <SymbolEditor

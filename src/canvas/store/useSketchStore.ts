@@ -192,6 +192,8 @@ interface SketchStoreState {
    * in one step — what the Library panel's "Place" action calls. */
   armComponent: (categoryId: string) => void;
   toggleLibraryPanel: () => void;
+  /** Shows the Library (true) or the Properties panel (false) in the sidebar. */
+  setLibraryPanelOpen: (open: boolean) => void;
   setPendingGuardedAction: (action: GuardedAction | null) => void;
   setCamera: (camera: CameraState) => void;
   setSelection: (selection: Selection) => void;
@@ -292,6 +294,7 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
   setTool: (tool) => set({ activeTool: tool, selection: emptySelection(), armedComponent: tool === 'component' ? get().armedComponent : null }),
   armComponent: (categoryId) => set({ activeTool: 'component', armedComponent: { categoryId }, selection: emptySelection() }),
   toggleLibraryPanel: () => set((s) => ({ libraryPanelOpen: !s.libraryPanelOpen })),
+  setLibraryPanelOpen: (open) => set({ libraryPanelOpen: open }),
   setPendingGuardedAction: (action) => set({ pendingGuardedAction: action }),
   setCamera: (camera) => set({ camera }),
   // Selecting a point/line/arc/component (to edit its length/angle/etc. in the

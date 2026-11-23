@@ -147,6 +147,21 @@ export function render(params: RenderParams) {
     drawComponentBody(ctx, instance, camera, size, colors, selection.componentIds.has(instance.id), componentScale, requestRedraw);
   }
 
+  // Ghost of the armed component under the cursor (see InteractionState.placementPreview):
+  // drawn faint, with the same body renderer placed components use, so what you see is
+  // exactly what the next click drops.
+  if (interaction.placementPreview && interaction.hoverSnap) {
+    ctx.save();
+    ctx.globalAlpha = 0.5;
+    const ghost = {
+      position: interaction.hoverSnap.point,
+      rotation: 0,
+      snapshot: { familyName: '', categoryName: '', symbol: interaction.placementPreview },
+    } as ComponentInstance;
+    drawComponentBody(ctx, ghost, camera, size, colors, false, componentScale, requestRedraw);
+    ctx.restore();
+  }
+
   for (const point of graph.points.values()) {
     const s = worldToScreen(point, camera, size);
     const selected = selection.pointIds.has(point.id);

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { buildComponentSnapshot } from '../library/db';
 import type { Id, Vec2 } from '../types/geometry';
 import { render } from './renderer';
 import { DEFAULT_TEXT_FONT_SIZE, useSketchStore } from './store/useSketchStore';
@@ -48,6 +49,16 @@ export function SketchCanvas() {
   const gridVisible = useSketchStore((s) => s.gridVisible);
   const theme = useSketchStore((s) => s.theme);
   const componentScale = useSketchStore((s) => s.componentScale);
+  const armedCategoryId = useSketchStore((s) => s.armedComponent?.categoryId ?? null);
+  // `version` is read so this re-evaluates on every document change; it returns a boolean,
+  // so the canvas only re-renders when the drawing goes from empty to not (or back).
+  const sceneEmpty = useSketchStore((s) => {
+    void s.version;
+    const g = s.graph;
+    return g.points.size + g.lines.size + g.arcs.size + g.components.size + g.texts.size === 0;
+  });
+  /** Name of the armed component, for the "Placing …" hint. */
+  const [armedName, setArmedName] = useState<string | null>(null);
 
   // `render` is handed `requestRedraw` (so it can ask for another frame once an uploaded
   // symbol image finishes decoding), and `requestRedraw` in turn calls `render` — the ref
@@ -361,6 +372,26 @@ export function SketchCanvas() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTool]);
 
+  // Load the armed component's drawing for the ghost that follows the cursor.
+  useEffect(() => {
+    let cancelled = false;
+    if (!armedCategoryId) {
+      interactionRef.current.placementPreview = null;
+      setArmedName(null);
+      requestRedraw();
+      return;
+    }
+    void buildComponentSnapshot(armedCategoryId).then((snapshot) => {
+      if (cancelled || !snapshot) return;
+      interactionRef.current.placementPreview = snapshot.symbol;
+      setArmedName(snapshot.categoryName);
+      requestRedraw();
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [armedCategoryId, requestRedraw]);
+
   // Recomputed on every render (which `camera` being a subscribed value guarantees for
   // pan/zoom), so an open editor tracks the note's world position instead of sticking to
   // the pixel it was opened at.
@@ -377,6 +408,26 @@ export function SketchCanvas() {
         onDoubleClick={onDoubleClick}
         onWheel={onWheel}
       />
+      {sceneEmpty && !armedCategoryId && !textEditor && (
+        <div className="canvas-empty" aria-hidden="true">
+          <h2>Start your schematic</h2>
+          <ol>
+            <li>
+              Open the <strong>Library</strong> tab and click a component
+            </li>
+            <li>Click the canvas to place it</li>
+            <li>
+              Pick the <strong>Line</strong> tool and drag between ports to connect them
+            </li>
+          </ol>
+          <p>Use File ▸ Save to keep your drawing as a file.</p>
+        </div>
+      )}
+      {armedCategoryId && armedName && (
+        <div className="canvas-hint">
+          Placing <strong>{armedName}</strong> — click to place · hold Alt to place off-grid · Esc to stop
+        </div>
+      )}
       {textEditor && textEditorScreen && (
         // Positioned and sized in screen space from the note's world position, so the
         // input sits exactly where the committed text will be drawn — typing in place

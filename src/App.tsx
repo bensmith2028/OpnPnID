@@ -1,15 +1,14 @@
 import { useEffect } from 'react';
 import { SketchCanvas } from './canvas/SketchCanvas';
 import { useSketchStore } from './canvas/store/useSketchStore';
-import { LibraryPanel } from './library/LibraryPanel';
-import { PropertiesPanel } from './ui/PropertiesPanel';
-import { Toolbar } from './ui/Toolbar';
+import { SidePanel } from './ui/SidePanel';
+import { ToolRail } from './ui/ToolRail';
+import { TopBar } from './ui/Toolbar';
 import { UnsavedChangesDialog } from './ui/UnsavedChangesDialog';
 import './App.css';
 
 export default function App() {
   const theme = useSketchStore((s) => s.theme);
-  const libraryPanelOpen = useSketchStore((s) => s.libraryPanelOpen);
   const dirty = useSketchStore((s) => s.dirty);
   const pendingGuardedAction = useSketchStore((s) => s.pendingGuardedAction);
 
@@ -31,10 +30,11 @@ export default function App() {
 
   return (
     <div className="app">
-      <Toolbar />
+      <TopBar />
       <div className="app-body">
+        <ToolRail />
         <SketchCanvas />
-        {libraryPanelOpen ? <LibraryPanel /> : <PropertiesPanel />}
+        <SidePanel />
       </div>
       {pendingGuardedAction && <UnsavedChangesDialog action={pendingGuardedAction} />}
     </div>

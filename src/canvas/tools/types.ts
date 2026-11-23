@@ -1,4 +1,4 @@
-import type { Id, SceneGraphJSON, Vec2 } from '../../types/geometry';
+import type { Id, SceneGraphJSON, SymbolGeometry, Vec2 } from '../../types/geometry';
 import type { ComponentLabelKind } from '../componentLabels';
 import type { SnapResult } from '../snapping';
 import type { CameraState } from '../store/useSketchStore';
@@ -120,11 +120,14 @@ export interface InteractionState {
   drag: DragState | null;
   pan: PanState | null;
   hoverSnap: SnapResult | null;
+  /** The drawing of the component currently armed for placement, shown as a faint ghost
+   * at the cursor so you can see what a click will drop. Null when nothing is armed. */
+  placementPreview: SymbolGeometry | null;
   altHeld: boolean;
 }
 
 export function createInteractionState(): InteractionState {
-  return { drawLine: null, drawArc: null, drawCircle: null, drag: null, pan: null, hoverSnap: null, altHeld: false };
+  return { drawLine: null, drawArc: null, drawCircle: null, drag: null, pan: null, hoverSnap: null, placementPreview: null, altHeld: false };
 }
 
 export interface CanvasSize {

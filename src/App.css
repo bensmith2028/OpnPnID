@@ -58,17 +58,18 @@ body {
 .toolbar {
   display: flex;
   align-items: center;
-  gap: 8px 16px;
-  padding: 8px 12px;
+  gap: 8px;
+  padding: 6px 12px;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
-  /* The toolbar has grown a lot of groups (tools, library, undo/redo, file actions,
-     exports, grid/scale controls, theme, filename) — a normal (non-fullscreen) window
-     width can't always fit them on one line. Wrapping to a second row keeps every
-     control reachable without ever needing horizontal scrolling, matching the same
-     fix already used for the symbol editor's own toolbar (.symbol-editor-toolbar). */
-  flex-wrap: wrap;
+}
+
+.toolbar-brand {
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.02em;
+  margin-right: 8px;
 }
 
 .toolbar-group {
@@ -112,21 +113,23 @@ body {
 }
 
 .grid-controls {
-  align-items: center;
-  gap: 12px;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  gap: 8px;
 }
 
 .grid-controls label {
   display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: space-between;
+  gap: 12px;
   font-size: 12px;
   color: var(--text-muted);
   white-space: nowrap;
 }
 
 .grid-controls input[type='number'] {
-  width: 56px;
+  width: 64px;
   background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -137,6 +140,10 @@ body {
 
 .grid-controls input[type='checkbox'] {
   accent-color: var(--accent);
+}
+
+.grid-controls .grid-visible-toggle {
+  justify-content: flex-start;
 }
 
 .app-body {
@@ -177,10 +184,8 @@ body {
 }
 
 .properties-panel {
-  width: 240px;
-  flex-shrink: 0;
-  background: var(--bg-panel);
-  border-left: 1px solid var(--border);
+  flex: 1;
+  min-height: 0;
   padding: 16px;
   overflow-y: auto;
   overflow-x: hidden;
@@ -347,7 +352,6 @@ body {
    --------------------------------------------------------------------------------- */
 
 .library-panel {
-  width: 320px;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -899,4 +903,225 @@ body {
 .unsaved-actions button:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* ---------------------------------------------------------------------------------
+   Menus (File, View)
+   --------------------------------------------------------------------------------- */
+.menu {
+  position: relative;
+}
+
+.menu-caret {
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+.menu-popup {
+  position: absolute;
+  top: calc(100% + 4px);
+  z-index: 50;
+  min-width: 230px;
+  padding: 6px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.menu-popup--left {
+  left: 0;
+}
+
+.menu-popup--right {
+  right: 0;
+}
+
+.toolbar .menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  width: 100%;
+  padding: 7px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  text-align: left;
+  font-size: 13px;
+}
+
+.toolbar .menu-item:hover:not(:disabled) {
+  background: var(--bg-button-hover);
+}
+
+.menu-hint {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.menu-separator {
+  height: 1px;
+  margin: 6px 4px;
+  background: var(--border);
+}
+
+.menu-form {
+  padding: 4px;
+}
+
+/* ---------------------------------------------------------------------------------
+   Tool rail (left edge)
+   --------------------------------------------------------------------------------- */
+.tool-rail {
+  width: 64px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 6px;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border);
+}
+
+.tool-button {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 0 6px;
+  background: transparent;
+  color: var(--text);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.tool-button:hover {
+  background: var(--bg-button-hover);
+}
+
+.tool-button.active {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.tool-key {
+  position: absolute;
+  top: 3px;
+  right: 5px;
+  font-size: 9px;
+  opacity: 0.55;
+}
+
+/* ---------------------------------------------------------------------------------
+   Sidebar tabs (Properties | Library)
+   --------------------------------------------------------------------------------- */
+.side-panel {
+  width: 320px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border);
+}
+
+.side-tabs {
+  display: flex;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.side-tabs button {
+  flex: 1;
+  padding: 10px 0;
+  background: transparent;
+  color: var(--text-muted);
+  border: none;
+  border-bottom: 2px solid transparent;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.side-tabs button:hover {
+  color: var(--text);
+}
+
+.side-tabs button.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+/* Browsing the library: a component name is a plain full-width list item that lights up on
+   hover, not a bordered box (which read as an editable text field). In Edit mode the same
+   slot becomes a real input (.library-list-name--input). */
+.library-list-row button.library-list-name {
+  flex: 1 1 auto;
+  padding: 7px 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  font-size: 13px;
+}
+
+.library-list-row button.library-list-name:hover {
+  background: var(--bg-button-hover);
+  border-color: var(--border);
+}
+
+/* ---------------------------------------------------------------------------------
+   Canvas overlays
+   --------------------------------------------------------------------------------- */
+.canvas-empty {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  max-width: 340px;
+  padding: 20px 24px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+  pointer-events: none;
+}
+
+.canvas-empty h2 {
+  margin: 0 0 10px;
+  font-size: 16px;
+  color: var(--text);
+}
+
+.canvas-empty ol {
+  margin: 0 0 10px;
+  padding-left: 20px;
+}
+
+.canvas-empty p {
+  margin: 0;
+  font-size: 12px;
+}
+
+.canvas-hint {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 14px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.canvas-hint strong {
+  color: var(--text);
 }
