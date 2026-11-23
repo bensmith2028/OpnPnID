@@ -1095,7 +1095,6 @@ body {
   color: var(--text-muted);
   font-size: 13px;
   line-height: 1.5;
-  pointer-events: none;
 }
 
 .canvas-empty h2 {
@@ -1112,59 +1111,6 @@ body {
 .canvas-empty p {
   margin: 0;
   font-size: 12px;
-}
-
-.canvas-hint {
-  position: absolute;
-  top: 12px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 7px 8px 7px 14px;
-  background: var(--accent);
-  color: var(--accent-contrast);
-  border-radius: 999px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
-  font-size: 13px;
-  white-space: nowrap;
-  pointer-events: none;
-}
-
-.canvas-hint strong {
-  font-weight: 700;
-}
-
-.canvas-hint-keys {
-  opacity: 0.75;
-  font-size: 12px;
-}
-
-.canvas-hint-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--accent-contrast);
-  animation: hint-pulse 1.4s ease-in-out infinite;
-}
-
-@keyframes hint-pulse {
-  50% {
-    opacity: 0.3;
-  }
-}
-
-.canvas-hint button {
-  pointer-events: auto;
-  padding: 3px 12px;
-  background: var(--accent-contrast);
-  color: var(--accent);
-  border: none;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
 }
 
 /* ---------------------------------------------------------------------------------
@@ -1633,41 +1579,6 @@ body {
   text-overflow: ellipsis;
 }
 
-.library-armed-badge {
-  flex-shrink: 0;
-  padding: 1px 8px;
-  background: var(--accent);
-  color: var(--accent-contrast);
-  border-radius: 999px;
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
-
-.library-placing {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 10px;
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
-  border: 1px solid var(--accent);
-  border-radius: 6px;
-  font-size: 12px;
-}
-
-.library-placing button {
-  background: var(--accent);
-  color: var(--accent-contrast);
-  border: none;
-  border-radius: 999px;
-  padding: 3px 12px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
 /* Rotate button: circular arrow with R inside, plus the key hint */
 .rotate-button {
   display: inline-flex;
@@ -1696,4 +1607,297 @@ body {
   border-radius: 3px;
   font-family: inherit;
   font-size: 11px;
+}
+
+/* Hardware (Properties) */
+.hardware-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+  font-size: 12px;
+}
+
+.hardware-heading {
+  color: var(--text-muted);
+}
+
+.hardware-section select,
+.hardware-section input,
+.hardware-section textarea {
+  width: 100%;
+  background: var(--bg-input);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.hardware-section textarea {
+  resize: vertical;
+  min-height: 70px;
+}
+
+.hardware-save {
+  align-self: flex-start;
+  background: var(--bg-button);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.hardware-save:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.hardware-dialog {
+  width: 460px;
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+}
+
+.hardware-dialog h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+
+.hardware-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 10px 0 12px;
+  overflow-y: auto;
+}
+
+.hardware-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.hardware-row-head {
+  display: flex;
+  gap: 6px;
+}
+
+.hardware-row input,
+.hardware-row textarea {
+  background: var(--bg-input);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.hardware-row-head input {
+  flex: 1;
+  font-weight: 600;
+}
+
+.hardware-row textarea {
+  resize: vertical;
+}
+
+.hardware-row-delete {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--error);
+}
+
+.hardware-row-delete:hover {
+  border-color: var(--error);
+}
+
+/* Hardware popup on hover */
+.hardware-tip {
+  position: absolute;
+  z-index: 15;
+  max-width: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  font-size: 13px;
+  pointer-events: none;
+}
+
+.hardware-tip span {
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Hardware catalog (top bar) */
+.catalog-dialog {
+  width: 560px;
+}
+
+.catalog-search {
+  width: 100%;
+  margin: 10px 0 4px;
+  background: var(--bg-input);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 7px 10px;
+  font-size: 13px;
+}
+
+/* Adding is its own section, set apart from the search above the list */
+.catalog-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.catalog-add select {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-input);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+
+.catalog-add button {
+  background: var(--bg-button);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.catalog-add button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.catalog-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.catalog-group h4 {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* "Start your schematic" card: tabs and the controls list */
+.canvas-empty {
+  width: 600px;
+  max-width: calc(100% - 24px);
+  max-height: calc(100% - 48px);
+  overflow-y: auto;
+}
+
+.canvas-empty-tabs {
+  display: flex;
+  gap: 4px;
+  margin: -6px 0 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.canvas-empty-tabs button {
+  padding: 6px 12px;
+  background: transparent;
+  color: var(--text-muted);
+  border: none;
+  border-bottom: 2px solid transparent;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.canvas-empty-tabs button:hover {
+  color: var(--text);
+}
+
+.canvas-empty-tabs button.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+.controls-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 28px;
+}
+
+.controls-list section {
+  margin-bottom: 10px;
+}
+
+/* The longest group (Mouse) spans both columns */
+.controls-list section:last-child {
+  grid-column: 1 / -1;
+}
+
+.controls-list h3 {
+  margin: 0 0 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.controls-list dl {
+  margin: 0;
+}
+
+.controls-row {
+  display: flex;
+  gap: 10px;
+  padding: 2px 0;
+  font-size: 12px;
+}
+
+.controls-row dt {
+  flex: 0 0 138px;
+}
+
+.controls-row dd {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.controls-row kbd {
+  padding: 1px 6px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 11px;
+  white-space: nowrap;
 }

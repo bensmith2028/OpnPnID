@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { useSketchStore } from '../canvas/store/useSketchStore';
 import { CategorySection } from './CategoryForm';
 import * as db from './db';
 import { describeError } from './errors';
@@ -41,18 +40,15 @@ function saveExpanded(ids: Set<string>): void {
  * manages the families themselves. */
 export function LibraryPanel() {
   const [families, setFamilies] = useState<db.Family[]>([]);
-  const [names, setNames] = useState<Record<string, string>>({});
-  const armedId = useSketchStore((s) => s.armedComponent?.categoryId ?? null);
-  const stopPlacing = useSketchStore((s) => s.setTool);
   const [expanded, setExpanded] = useState<Set<string>>(loadExpanded);
   const [managingFamilies, setManagingFamilies] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = () =>
-    Promise.all([db.listFamilies(), db.listCategories()])
-      .then(([fams, cats]) => {
+    db
+      .listFamilies()
+      .then((fams) => {
         setFamilies(fams);
-        setNames(Object.fromEntries(cats.map((c) => [c.id, c.name])));
         setError(null);
       })
       .catch((e: unknown) => setError(describeError(e)));
@@ -84,17 +80,6 @@ export function LibraryPanel() {
           {GEAR}
         </button>
       </div>
-
-      {armedId && names[armedId] && (
-        <div className="library-placing">
-          <span>
-            Ready to place <strong>{names[armedId]}</strong> — click the canvas
-          </span>
-          <button onClick={() => stopPlacing('select')} title="Stop placing (Esc)">
-            Done
-          </button>
-        </div>
-      )}
 
       {managingFamilies ? (
         <FamilyManager families={families} onChange={() => void load()} />

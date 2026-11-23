@@ -26,6 +26,7 @@ export async function importLibraryFile(): Promise<MergeSummary | null> {
 /** One-line description of an import's outcome, for the panel's status line. */
 export function describeImport(s: MergeSummary): string {
   const parts = [`Added ${s.added} component${s.added === 1 ? '' : 's'}`];
+  if (s.hardware > 0) parts.push(`${s.hardware} hardware item${s.hardware === 1 ? '' : 's'}`);
   if (s.renamed > 0) parts.push(`${s.renamed} renamed to avoid clashing with one you already have`);
   if (s.skipped > 0) parts.push(`${s.skipped} skipped — already in your library`);
   return parts.join('; ') + '.';

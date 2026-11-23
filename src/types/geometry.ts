@@ -164,6 +164,14 @@ export interface ComponentSnapshot {
  * of the point graph at all — it's rendered purely from `position`/`rotation`, like a
  * stamp (see `snapshot.symbol`).
  */
+/** The specific hardware a placed component is, as the drawing records it: a name and free-text
+ * notes. Copied onto the component (not linked to the library) so a drawing stays complete on
+ * its own, and so one component's notes can differ from the library entry it started from. */
+export interface ComponentHardware {
+  name: string;
+  notes: string;
+}
+
 export interface ComponentInstance {
   id: Id;
   categoryId: string;
@@ -177,6 +185,8 @@ export interface ComponentInstance {
   /** When set, every stroke of this component's symbol is drawn at this thickness instead of
    * the weights the symbol itself specifies. */
   lineWeight?: number;
+  /** Absent until hardware is chosen or typed in. */
+  hardware?: ComponentHardware;
   position: Vec2;
   rotation: number;
   /** Where the `tag` / `name` label sits relative to `position`, in world units, once the

@@ -22,6 +22,8 @@ export interface DetailedBomRow {
   name: string;
   family: string;
   category: string;
+  hardware: string;
+  notes: string;
 }
 
 /** One row per placed instance. `name` is optional on the instance (never auto-generated —
@@ -32,40 +34,47 @@ export function buildDetailedRows(components: ComponentInstance[]): DetailedBomR
     name: instance.name ?? '',
     family: instance.snapshot.familyName,
     category: instance.snapshot.categoryName,
+    hardware: instance.hardware?.name ?? '',
+    notes: instance.hardware?.notes ?? '',
   }));
 }
 
 export interface SummaryBomRow {
   family: string;
   category: string;
+  hardware: string;
+  notes: string;
   quantity: number;
 }
 
-/** Groups instances by component kind into one row each with a quantity. Deliberately
+/** Groups instances by component kind and hardware (name and notes) into one row each with a
+ * quantity, so two valves needing different seals stay separate lines. Deliberately
  * carries no Name column: a name describes one instance's service ("Reactor feed pump"), so
  * it has no meaning for a group of several. The join key is JSON-encoded so values
  * containing arbitrary characters can never collide across a different combination. */
 export function buildSummaryRows(components: ComponentInstance[]): SummaryBomRow[] {
   const groups = new Map<string, SummaryBomRow>();
   for (const instance of components) {
-    const key = JSON.stringify([instance.snapshot.familyName, instance.snapshot.categoryName]);
+    const hardware = instance.hardware?.name ?? '';
+    const notes = instance.hardware?.notes ?? '';
+    const key = JSON.stringify([instance.snapshot.familyName, instance.snapshot.categoryName, hardware, notes]);
     const existing = groups.get(key);
     if (existing) existing.quantity += 1;
-    else groups.set(key, { family: instance.snapshot.familyName, category: instance.snapshot.categoryName, quantity: 1 });
+    else groups.set(key, { family: instance.snapshot.familyName, category: instance.snapshot.categoryName, hardware, notes, quantity: 1 });
   }
   return [...groups.values()];
 }
 
-const DETAILED_HEADERS = ['Tag', 'Name', 'Family', 'Component'];
-const SUMMARY_HEADERS = ['Family', 'Component', 'Quantity'];
+const DETAILED_HEADERS = ['Tag', 'Name', 'Family', 'Component', 'Hardware', 'Notes'];
+const SUMMARY_HEADERS = ['Family', 'Component', 'Hardware', 'Notes', 'Quantity'];
 
 export function detailedRowsToCsv(rows: DetailedBomRow[]): string {
-  const lines = [rowToCsvLine(DETAILED_HEADERS), ...rows.map((r) => rowToCsvLine([r.tag, r.name, r.family, r.category]))];
+  const lines = [rowToCsvLine(DETAILED_HEADERS), ...rows.map((r) => rowToCsvLine([r.tag, r.name, r.family, r.category, r.hardware, r.notes]))];
   return lines.join('\n') + '\n';
 }
 
 export function summaryRowsToCsv(rows: SummaryBomRow[]): string {
-  const lines = [rowToCsvLine(SUMMARY_HEADERS), ...rows.map((r) => rowToCsvLine([r.family, r.category, r.quantity]))];
+  const lines = [rowToCsvLine(SUMMARY_HEADERS), ...rows.map((r) => rowToCsvLine([r.family, r.category, r.hardware, r.notes, r.quantity]))];
   return lines.join('\n') + '\n';
 }
 

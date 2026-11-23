@@ -62,7 +62,7 @@ describe('sharing', () => {
 
     const { parseLibraryFile, serializeLibrary } = await import('../io/libraryFormat');
     const summary = await db.importLibrary(parseLibraryFile(serializeLibrary(exported)));
-    expect(summary).toEqual({ added: 0, skipped: 1, renamed: 0 });
+    expect(summary).toEqual({ added: 0, hardware: 0, skipped: 1, renamed: 0 });
   });
 
   it("importing another person's library adds to — never replaces — yours", async () => {
@@ -81,5 +81,40 @@ describe('sharing', () => {
     await db.deleteFamily(family.id);
     await db.resetToDefaultLibrary();
     expect((await db.listFamilies()).length).toBeGreaterThan(0);
+  });
+});
+
+describe('hardware', () => {
+  it('belongs to a component: add, edit, list, delete', async () => {
+    const [cat] = await db.listCategories();
+    expect(await db.listHardware(cat.id)).toEqual([]);
+    const item = await db.upsertHardware({ categoryId: cat.id, name: 'Burkert 2076', notes: 'Viton seals' });
+    await db.upsertHardware({ ...item, notes: 'Viton seals, 24 VDC' });
+    expect((await db.listHardware(cat.id)).map((h) => [h.name, h.notes])).toEqual([['Burkert 2076', 'Viton seals, 24 VDC']]);
+    await db.deleteHardware(item.id);
+    expect(await db.listHardware(cat.id)).toEqual([]);
+  });
+
+  it('goes when its component goes', async () => {
+    const [cat] = await db.listCategories();
+    await db.upsertHardware({ categoryId: cat.id, name: 'X', notes: '' });
+    await db.deleteCategory(cat.id);
+    expect(await db.listHardware(cat.id)).toEqual([]);
+  });
+
+  it('travels with an exported component and is added (never duplicated) on import', async () => {
+    const { parseLibraryFile, serializeLibrary } = await import('../io/libraryFormat');
+    const [cat] = await db.listCategories();
+    await db.upsertHardware({ categoryId: cat.id, name: 'Burkert 2076', notes: 'Viton seals' });
+    const text = serializeLibrary(await db.collectExportable([cat.id]));
+    expect(parseLibraryFile(text).components[0].hardware).toEqual([{ name: 'Burkert 2076', notes: 'Viton seals' }]);
+
+    // Importing the same component again adds nothing...
+    expect(await db.importLibrary(parseLibraryFile(text))).toMatchObject({ hardware: 0, skipped: 1 });
+    // ...but a colleague's extra hardware for a component you already have is added to it.
+    const theirs = parseLibraryFile(text);
+    theirs.components[0].hardware.push({ name: 'Parker 9', notes: 'EPDM' });
+    expect(await db.importLibrary(theirs)).toMatchObject({ hardware: 1 });
+    expect((await db.listHardware(cat.id)).map((h) => h.name)).toEqual(['Burkert 2076', 'Parker 9']);
   });
 });

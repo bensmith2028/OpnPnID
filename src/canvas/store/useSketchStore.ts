@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { suggestTag } from '../../library/tagging';
-import type { AxisLock, ComponentSnapshot, Id, SceneGraphJSON, Selection, Vec2 } from '../../types/geometry';
+import type { AxisLock, ComponentHardware, ComponentSnapshot, Id, SceneGraphJSON, Selection, Vec2 } from '../../types/geometry';
 import { COMPONENT_LABEL_KINDS, componentLabelCustomOffset, type ComponentLabelKind } from '../componentLabels';
 import { SceneGraph } from '../sceneGraph';
 
@@ -70,6 +70,7 @@ interface ClipboardComponent {
   tag: string;
   name?: string;
   lineWeight?: number;
+  hardware?: ComponentHardware;
   position: Vec2;
   rotation: number;
   /** Custom label placements travel with the copy — they're relative to the instance's
@@ -239,6 +240,8 @@ interface SketchStoreState {
   /** Sets the stroke thickness (px) of every selected line, arc and component — null restores
    * the default. One undo step. */
   setSelectionWeight: (weight: number | null) => void;
+  /** Sets (or clears, with null) the hardware recorded on a placed component. */
+  setComponentHardware: (componentId: Id, hardware: ComponentHardware | null) => void;
   /** Renames a placed component (a descriptive name, not its tag). An empty string
    * clears the name — see SceneGraph.setComponentName. */
   setComponentName: (componentId: Id, name: string) => void;
@@ -456,6 +459,12 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
     get().commit(before);
   },
 
+  setComponentHardware: (componentId, hardware) => {
+    const before = get().graph.toJSON();
+    get().graph.setComponentHardware(componentId, hardware);
+    get().commit(before);
+  },
+
   setSelectionWeight: (weight) => {
     const { graph, selection } = get();
     const before = graph.toJSON();
@@ -541,6 +550,7 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
         tag: instance.tag,
         name: instance.name,
         lineWeight: instance.lineWeight,
+        hardware: instance.hardware ? { ...instance.hardware } : undefined,
         position: { ...instance.position },
         rotation: instance.rotation,
         ...(instance.tagOffset ? { tagOffset: { ...instance.tagOffset } } : {}),
@@ -642,6 +652,7 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
         // identifier, so a copy sharing its original's name is correct, not a clash.
         name: item.name,
         lineWeight: item.lineWeight,
+        hardware: item.hardware ? { ...item.hardware } : undefined,
         position: { x: item.position.x + offset, y: item.position.y + offset },
         rotation: item.rotation,
         tagOffset: item.tagOffset,

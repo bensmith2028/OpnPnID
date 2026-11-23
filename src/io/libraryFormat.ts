@@ -15,6 +15,7 @@
  *       "subtype": "check",
  *       "actuation": null,
  *       "portCount": 2,
+ *       "hardware": [{ "name": "Burkert 2076", "notes": "Viton seals, 24 VDC" }],
  *       "symbol": { ...a symbol file's contents (see symbolFormat.ts)... }
  *     }
  *   ]
@@ -40,6 +41,12 @@ export const LIBRARY_APP_MARKER = 'opnpnid-library';
  * named for what it is. */
 export const LIBRARY_FILE_EXTENSION = 'pnidlib.json';
 
+/** A specific piece of hardware for a component: a name and free-text notes. */
+export interface HardwareEntry {
+  name: string;
+  notes: string;
+}
+
 export interface LibraryFileComponent {
   family: { name: string; tagLetter: string | null };
   name: string;
@@ -47,6 +54,7 @@ export interface LibraryFileComponent {
   actuation: string | null;
   portCount: number;
   geometry: SymbolGeometry;
+  hardware: HardwareEntry[];
 }
 
 export interface LibraryFile {
@@ -61,19 +69,21 @@ export interface ExportableComponent {
   family: Family | null;
   category: Category;
   geometry: SymbolGeometry;
+  hardware?: HardwareEntry[];
 }
 
 export function buildLibraryFile(components: ExportableComponent[]): LibraryFile {
   return {
     app: LIBRARY_APP_MARKER,
     version: LIBRARY_FORMAT_VERSION,
-    components: components.map(({ family, category, geometry }) => ({
+    components: components.map(({ family, category, geometry, hardware }) => ({
       family: { name: family?.name ?? 'Other', tagLetter: family?.tagLetter ?? null },
       name: category.name,
       subtype: category.subtype,
       actuation: category.actuation,
       portCount: category.portCount,
       geometry,
+      hardware: hardware ?? [],
     })),
   };
 }
@@ -85,8 +95,9 @@ export function serializeLibrary(components: ExportableComponent[]): string {
   return JSON.stringify(
     {
       ...file,
-      components: file.components.map(({ geometry, ...rest }) => ({
+      components: file.components.map(({ geometry, hardware, ...rest }) => ({
         ...rest,
+        ...(hardware.length > 0 ? { hardware } : {}),
         symbol: buildSymbolFile(geometry, { name: rest.name, subtype: rest.subtype, actuation: rest.actuation }),
       })),
     },
@@ -146,6 +157,7 @@ export function parseLibraryFile(raw: string): LibraryFile {
             actuation: file.actuation,
             portCount: Math.max(1, file.geometry.ports.length),
             geometry: file.geometry,
+            hardware: [],
           },
         ],
       };
@@ -175,6 +187,7 @@ export function parseLibraryFile(raw: string): LibraryFile {
       actuation: text(entry.actuation),
       portCount,
       geometry: file.geometry,
+      hardware: parseHardware(entry.hardware),
     };
   });
 
@@ -183,6 +196,8 @@ export function parseLibraryFile(raw: string): LibraryFile {
 
 export interface MergeSummary {
   added: number;
+  /** Hardware entries added (to new components, and to ones already in the library). */
+  hardware: number;
   skipped: number;
   /** Components that arrived under a different name because theirs was taken. */
   renamed: number;
@@ -192,6 +207,19 @@ export interface MergeDeps {
   newId: (prefix: string) => string;
   /** The drawing a category actually shows — its stored symbol, or its built-in fallback. */
   effectiveSymbol: (category: Category, symbols: StoredSymbol[]) => SymbolGeometry;
+}
+
+/** Hardware entries from a file: anything without a usable name is dropped (a damaged entry
+ * shouldn't fail the whole import), and missing notes mean empty notes. */
+function parseHardware(raw: unknown): HardwareEntry[] {
+  if (!Array.isArray(raw)) return [];
+  const out: HardwareEntry[] = [];
+  for (const item of raw) {
+    if (!isRecord(item)) continue;
+    const name = text(item.name);
+    if (name) out.push({ name, notes: typeof item.notes === 'string' ? item.notes : '' });
+  }
+  return out;
 }
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
@@ -204,7 +232,18 @@ export function mergeLibrary(existing: LibraryData, incoming: LibraryFile, deps:
   const families = existing.families.map((f) => ({ ...f }));
   const categories = existing.categories.map((c) => ({ ...c }));
   const symbols = existing.symbols.map((s) => ({ ...s }));
-  const summary: MergeSummary = { added: 0, skipped: 0, renamed: 0 };
+  const hardware = existing.hardware.map((h) => ({ ...h }));
+  const summary: MergeSummary = { added: 0, hardware: 0, skipped: 0, renamed: 0 };
+
+  /** Adds hardware to a component, skipping names it already has — so importing never creates
+   * duplicates or touches what's there. */
+  const addHardware = (categoryId: string, entries: HardwareEntry[]) => {
+    for (const entry of entries) {
+      if (hardware.some((h) => h.categoryId === categoryId && key(h.name) === key(entry.name))) continue;
+      hardware.push({ id: deps.newId('hw'), categoryId, name: entry.name, notes: entry.notes });
+      summary.hardware++;
+    }
+  };
 
   for (const item of incoming.components) {
     let family = families.find((f) => key(f.name) === key(item.family.name));
@@ -219,7 +258,10 @@ export function mergeLibrary(existing: LibraryData, incoming: LibraryFile, deps:
     }
 
     const sameName = categories.filter((c) => c.familyId === family.id && key(c.name) === key(item.name));
-    if (sameName.some((c) => same(deps.effectiveSymbol(c, symbols), item.geometry))) {
+    const duplicate = sameName.find((c) => same(deps.effectiveSymbol(c, symbols), item.geometry));
+    if (duplicate) {
+      // Already here: nothing to add but any hardware it doesn't have yet.
+      addHardware(duplicate.id, item.hardware);
       summary.skipped++;
       continue;
     }
@@ -235,8 +277,10 @@ export function mergeLibrary(existing: LibraryData, incoming: LibraryFile, deps:
 
     const symbol: StoredSymbol = { id: deps.newId('sym'), geometry: item.geometry };
     symbols.push(symbol);
+    const categoryId = deps.newId('cat');
+    addHardware(categoryId, item.hardware);
     categories.push({
-      id: deps.newId('cat'),
+      id: categoryId,
       familyId: family.id,
       name,
       subtype: item.subtype,
@@ -247,5 +291,5 @@ export function mergeLibrary(existing: LibraryData, incoming: LibraryFile, deps:
     summary.added++;
   }
 
-  return { data: { families, categories, symbols }, summary };
+  return { data: { families, categories, symbols, hardware }, summary };
 }

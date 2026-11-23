@@ -3,6 +3,8 @@ import type { AxisLock, Id, Line } from '../types/geometry';
 import { hasCustomLabelOffset } from '../canvas/componentLabels';
 import { useSketchStore } from '../canvas/store/useSketchStore';
 import type { SceneGraph } from '../canvas/sceneGraph';
+import * as db from '../library/db';
+import { notify } from './notice';
 import { WeightField, commonWeight } from './WeightField';
 
 const RAD_TO_DEG = 180 / Math.PI;
@@ -341,6 +343,97 @@ function ArcProperties({ arcId }: { arcId: Id }) {
   );
 }
 
+/** The specific hardware a placed component is: pick one saved for this component type (which
+ * copies its name and notes onto the component), or just type — either way the component keeps
+ * its own copy, so its notes can differ from the catalog entry ("this one needs EPDM"). */
+function HardwareSection({ componentId, categoryId }: { componentId: Id; categoryId: string }) {
+  const version = useSketchStore((s) => s.version);
+  const setComponentHardware = useSketchStore((s) => s.setComponentHardware);
+  const instance = useSketchStore.getState().graph.components.get(componentId);
+
+  const [saved, setSaved] = useState<db.HardwareItem[]>([]);
+  const [nameText, setNameText] = useState('');
+  const [notesText, setNotesText] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => void db.listHardware(categoryId).then((items) => !cancelled && setSaved(items));
+    load();
+    const off = db.onLibraryChange(load);
+    return () => {
+      cancelled = true;
+      off();
+    };
+  }, [categoryId]);
+
+  // Follow the component (a different selection, an undo, a paste).
+  useEffect(() => {
+    setNameText(instance?.hardware?.name ?? '');
+    setNotesText(instance?.hardware?.notes ?? '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [componentId, version]);
+
+  if (!instance) return null;
+  const current = instance.hardware;
+
+  const commit = () => {
+    if (nameText === (current?.name ?? '') && notesText === (current?.notes ?? '')) return;
+    setComponentHardware(componentId, { name: nameText, notes: notesText });
+  };
+
+  const pick = (id: string) => {
+    const item = saved.find((h) => h.id === id);
+    if (item) setComponentHardware(componentId, { name: item.name, notes: item.notes });
+  };
+
+  const saveToLibrary = async () => {
+    const name = nameText.trim();
+    if (!name) return;
+    const existing = saved.find((h) => h.name.trim().toLowerCase() === name.toLowerCase());
+    await db.upsertHardware({ id: existing?.id, categoryId, name, notes: notesText });
+    notify(existing ? `Updated "${name}" in the hardware catalog.` : `Saved "${name}" to the hardware catalog for ${instance.snapshot.categoryName}.`);
+  };
+
+  const matching = saved.find((h) => h.name === current?.name && h.notes === current?.notes);
+
+  return (
+    <div className="hardware-section">
+      <span className="hardware-heading">Hardware</span>
+      {saved.length > 0 && (
+        <select value={matching?.id ?? ''} onChange={(e) => pick(e.target.value)} title="Hardware catalog entries for this type of component">
+          <option value="" disabled>
+            Choose from the hardware catalog…
+          </option>
+          {saved.map((h) => (
+            <option key={h.id} value={h.id}>
+              {h.name}
+            </option>
+          ))}
+        </select>
+      )}
+      <input
+        value={nameText}
+        placeholder={instance.snapshot.categoryName}
+        onChange={(e) => setNameText(e.target.value)}
+        onBlur={commit}
+        onKeyDown={onEnter(commit)}
+        aria-label="Hardware name"
+      />
+      <textarea
+        value={notesText}
+        placeholder="Notes — requirements, attributes"
+        rows={4}
+        onChange={(e) => setNotesText(e.target.value)}
+        onBlur={commit}
+        aria-label="Hardware notes"
+      />
+      <button className="hardware-save" onClick={() => void saveToLibrary()} disabled={!nameText.trim()} title="Keep this name and these notes in the hardware catalog, to pick again for other components of this type">
+        Save to catalog
+      </button>
+    </div>
+  );
+}
+
 function ComponentProperties({ componentId }: { componentId: Id }) {
   const version = useSketchStore((s) => s.version);
   const setComponentTag = useSketchStore((s) => s.setComponentTag);
@@ -422,6 +515,8 @@ function ComponentProperties({ componentId }: { componentId: Id }) {
       </label>
 
       <WeightField value={instance.lineWeight} onChange={setSelectionWeight} />
+
+      <HardwareSection componentId={componentId} categoryId={instance.categoryId} />
 
       {/* Only offered once a label has actually been dragged — there's nothing to reset
           otherwise, and a permanently-disabled button would just be noise. */}

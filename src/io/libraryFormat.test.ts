@@ -21,6 +21,7 @@ function library(): LibraryData {
     families: [{ id: 'fam1', name: 'Valve', tagLetter: 'V', sortOrder: 0 }],
     categories: [category({ id: 'c1', name: 'Check Valve', symbolId: 's1' })],
     symbols: [{ id: 's1', geometry: lineSymbol(10) }],
+    hardware: [],
   };
 }
 
@@ -62,7 +63,7 @@ describe('mergeLibrary', () => {
   it('adds new components and reuses a family that already exists', () => {
     const before = library();
     const { data, summary } = mergeLibrary(before, incoming(exportable('Needle Valve', lineSymbol(6))), deps);
-    expect(summary).toEqual({ added: 1, skipped: 0, renamed: 0 });
+    expect(summary).toEqual({ added: 1, hardware: 0, skipped: 0, renamed: 0 });
     expect(data.families).toHaveLength(1);
     expect(data.categories.map((c) => c.name).sort()).toEqual(['Check Valve', 'Needle Valve']);
     // Input untouched.
@@ -76,13 +77,13 @@ describe('mergeLibrary', () => {
 
   it('skips a component that is already there with the same drawing', () => {
     const { data, summary } = mergeLibrary(library(), incoming(exportable('check valve', lineSymbol(10))), deps);
-    expect(summary).toEqual({ added: 0, skipped: 1, renamed: 0 });
+    expect(summary).toEqual({ added: 0, hardware: 0, skipped: 1, renamed: 0 });
     expect(data.categories).toHaveLength(1);
   });
 
   it('never overwrites: same name with a different drawing arrives renamed', () => {
     const first = mergeLibrary(library(), incoming(exportable('Check Valve', lineSymbol(5))), deps);
-    expect(first.summary).toEqual({ added: 1, skipped: 0, renamed: 1 });
+    expect(first.summary).toEqual({ added: 1, hardware: 0, skipped: 0, renamed: 1 });
     expect(first.data.categories.map((c) => c.name).sort()).toEqual(['Check Valve', 'Check Valve (2)']);
     // The original is intact.
     expect(first.data.symbols.find((s) => s.id === 's1')!.geometry).toEqual(lineSymbol(10));

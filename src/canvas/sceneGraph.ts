@@ -1,4 +1,4 @@
-import type { Arc, AxisLock, ComponentInstance, ComponentSnapshot, Id, Line, Point, SceneGraphJSON, TextAnnotation, Vec2 } from '../types/geometry';
+import type { Arc, AxisLock, ComponentHardware, ComponentInstance, ComponentSnapshot, Id, Line, Point, SceneGraphJSON, TextAnnotation, Vec2 } from '../types/geometry';
 import type { ComponentLabelKind } from './componentLabels';
 import {
   add,
@@ -492,6 +492,8 @@ export class SceneGraph {
     name?: string;
     /** Optional stroke-thickness override — like `name`, only set when reinstating one (paste). */
     lineWeight?: number;
+    /** Optional hardware — only set when reinstating one (paste). */
+    hardware?: ComponentHardware;
     position: Vec2;
     rotation: number;
     /** Optional custom label placements — like `name`, only ever set by a caller
@@ -519,6 +521,7 @@ export class SceneGraph {
       tag: params.tag,
       ...(params.name ? { name: params.name } : {}),
       ...(params.lineWeight !== undefined ? { lineWeight: params.lineWeight } : {}),
+      ...(params.hardware ? { hardware: params.hardware } : {}),
       ...(params.tagOffset ? { tagOffset: params.tagOffset } : {}),
       ...(params.nameOffset ? { nameOffset: params.nameOffset } : {}),
       position: params.position,
@@ -580,6 +583,7 @@ export class SceneGraph {
       position: { ...c.position },
       // Copied, not carried by reference, for the same reason `position` is: these end up
       // in undo snapshots, which must not alias the live instance a label drag mutates.
+      ...(c.hardware ? { hardware: { ...c.hardware } } : {}),
       ...(c.tagOffset ? { tagOffset: { ...c.tagOffset } } : {}),
       ...(c.nameOffset ? { nameOffset: { ...c.nameOffset } } : {}),
       connections: c.connections.map((cc) => ({ ...cc })),
@@ -609,6 +613,17 @@ export class SceneGraph {
       changed = true;
     }
     return changed;
+  }
+
+  /** Sets a component's hardware. A blank name *and* blank notes clears it entirely, so "no
+   * hardware" is a single state (an absent field) everywhere downstream. */
+  setComponentHardware(id: Id, hardware: ComponentHardware | null) {
+    const instance = this.components.get(id);
+    if (!instance) return;
+    const name = hardware?.name.trim() ?? '';
+    const notes = hardware?.notes ?? '';
+    if (!name && !notes.trim()) delete instance.hardware;
+    else instance.hardware = { name, notes };
   }
 
   setComponentTag(id: Id, tag: string) {

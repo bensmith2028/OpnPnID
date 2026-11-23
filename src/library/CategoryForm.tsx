@@ -76,11 +76,10 @@ export function CategorySection({ familyId }: { familyId: string }) {
               <button
                 className="library-list-name"
                 onClick={() => armComponent(c.id)}
-                title={armedId === c.id ? 'Ready to place — click the canvas' : 'Pick this component, then click the canvas to place it'}
+                title="Pick this component, then click the canvas to place it"
                 aria-pressed={armedId === c.id}
               >
                 <span className="library-list-label">{c.name}</span>
-                {armedId === c.id && <span className="library-armed-badge">Ready to place</span>}
               </button>
               <button className="library-icon-button" onClick={() => setEditing(c)} title={`Edit ${c.name} — drawing, name, connection ports`} aria-label={`Edit ${c.name}`}>
                 {PENCIL}

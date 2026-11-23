@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { buildComponentSnapshot } from '../library/db';
+import { EmptyGuide } from '../ui/EmptyGuide';
 import type { Id, Vec2 } from '../types/geometry';
 import { render } from './renderer';
 import { DEFAULT_TEXT_FONT_SIZE, useSketchStore } from './store/useSketchStore';
@@ -10,6 +11,7 @@ import { drawCircleCancel, drawCircleOnPointerDown, drawCircleOnPointerMove } fr
 import { componentOnPointerDown, componentOnPointerMove } from './tools/componentTool';
 import { pointOnPointerDown, pointOnPointerMove } from './tools/pointTool';
 import {
+  componentAtWorld,
   componentLabelAtWorld,
   selectOnPointerDown,
   selectOnPointerMove,
@@ -57,8 +59,12 @@ export function SketchCanvas() {
     const g = s.graph;
     return g.points.size + g.lines.size + g.arcs.size + g.components.size + g.texts.size === 0;
   });
-  /** Name of the armed component, for the "Placing …" hint. */
-  const [armedName, setArmedName] = useState<string | null>(null);
+  /** The hardware popup shown while hovering a component that has hardware set. Its position is
+   * kept in a ref and written straight to the element, so following the cursor doesn't
+   * re-render the whole canvas on every mouse move. */
+  const [hoverTip, setHoverTip] = useState<{ id: Id; name: string; notes: string } | null>(null);
+  const tipRef = useRef<HTMLDivElement>(null);
+  const tipPosRef = useRef({ x: 0, y: 0 });
 
   // `render` is handed `requestRedraw` (so it can ask for another frame once an uploaded
   // symbol image finishes decoding), and `requestRedraw` in turn calls `render` — the ref
@@ -197,6 +203,7 @@ export function SketchCanvas() {
         commitTextEditor();
         return;
       }
+      setHoverTip(null);
       canvasRef.current?.setPointerCapture(e.pointerId);
       const isPanGesture = e.button === 1 || (e.button === 0 && spaceHeldRef.current);
       if (isPanGesture) {
@@ -225,6 +232,29 @@ export function SketchCanvas() {
     [activeTool, getWorld, commitTextEditor, openTextEditor],
   );
 
+  /** Shows (or hides) the hardware popup for whatever component is under the cursor. Only while
+   * just looking around with the Select tool — not mid-drag, and not while drawing. */
+  const hoverTipRef = useRef(hoverTip);
+  hoverTipRef.current = hoverTip;
+  const updateHardwareTip = useCallback((e: React.PointerEvent, world: Vec2) => {
+    const hoverTip = hoverTipRef.current;
+    const instance = activeTool === 'select' && !interactionRef.current.drag ? componentAtWorld(world) : null;
+    const hw = instance?.hardware;
+    if (!instance || !hw || (!hw.name.trim() && !hw.notes.trim())) {
+      if (hoverTip) setHoverTip(null);
+      return;
+    }
+    const rect = canvasRef.current!.getBoundingClientRect();
+    tipPosRef.current = { x: Math.min(e.clientX - rect.left + 16, rect.width - 300), y: e.clientY - rect.top + 16 };
+    if (tipRef.current) {
+      tipRef.current.style.left = `${tipPosRef.current.x}px`;
+      tipRef.current.style.top = `${tipPosRef.current.y}px`;
+    }
+    if (!hoverTip || hoverTip.id !== instance.id || hoverTip.name !== hw.name || hoverTip.notes !== hw.notes) {
+      setHoverTip({ id: instance.id, name: hw.name, notes: hw.notes });
+    }
+  }, [activeTool]);
+
   const onPointerMove = useCallback(
     (e: React.PointerEvent) => {
       const pan = interactionRef.current.pan;
@@ -240,6 +270,7 @@ export function SketchCanvas() {
         return;
       }
       const world = getWorld(e);
+      updateHardwareTip(e, world);
       if (activeTool === 'line') drawLineOnPointerMove(world, toolCtx);
       else if (activeTool === 'arc') drawArcOnPointerMove(world, toolCtx);
       else if (activeTool === 'circle') drawCircleOnPointerMove(world, toolCtx);
@@ -271,15 +302,14 @@ export function SketchCanvas() {
   // an in-progress line/arc chain is unaffected because its preview is drawn from its own
   // `snap`, and a drag holds pointer capture, which suppresses this event entirely.
   const onPointerLeave = useCallback(() => {
+    setHoverTip(null);
     if (!interactionRef.current.hoverSnap) return;
     interactionRef.current.hoverSnap = null;
     requestRedraw();
   }, [requestRedraw]);
 
-  // Double-clicking a placed component opens the real-hardware assignment modal — the
-  // one place a component's real part gets picked/added now that LibraryPanel only
-  // places bare category symbols. Double-clicking a text annotation re-opens it in the
-  // inline editor, so notes are edited where they sit rather than only in the sidebar.
+  // Double-clicking a text annotation re-opens it in the inline editor, so notes are edited
+  // where they sit rather than only in the sidebar.
   const onDoubleClick = useCallback(
     (e: React.MouseEvent) => {
       if (activeTool !== 'select') return;
@@ -383,14 +413,12 @@ export function SketchCanvas() {
     let cancelled = false;
     if (!armedCategoryId) {
       interactionRef.current.placementPreview = null;
-      setArmedName(null);
       requestRedraw();
       return;
     }
     void buildComponentSnapshot(armedCategoryId).then((snapshot) => {
       if (cancelled || !snapshot) return;
       interactionRef.current.placementPreview = snapshot.symbol;
-      setArmedName(snapshot.categoryName);
       requestRedraw();
     });
     return () => {
@@ -415,28 +443,12 @@ export function SketchCanvas() {
         onWheel={onWheel}
       />
       {sceneEmpty && !armedCategoryId && !textEditor && (
-        <div className="canvas-empty" aria-hidden="true">
-          <h2>Start your schematic</h2>
-          <ol>
-            <li>
-              Open the <strong>Library</strong> tab and click a component
-            </li>
-            <li>Click the canvas to place it</li>
-            <li>
-              Pick the <strong>Line</strong> tool and drag between ports to connect them
-            </li>
-          </ol>
-          <p>Use File ▸ Save As… to keep your drawing as a file.</p>
-        </div>
+        <EmptyGuide />
       )}
-      {armedCategoryId && armedName && (
-        <div className="canvas-hint">
-          <span className="canvas-hint-dot" aria-hidden="true" />
-          <span>
-            Ready to place <strong>{armedName}</strong> — click the canvas
-            <span className="canvas-hint-keys"> · Alt = off-grid · Esc = stop</span>
-          </span>
-          <button onClick={() => useSketchStore.getState().setTool('select')}>Done</button>
+      {hoverTip && (
+        <div ref={tipRef} className="hardware-tip" style={{ left: tipPosRef.current.x, top: tipPosRef.current.y }} role="tooltip">
+          {hoverTip.name.trim() && <strong>{hoverTip.name}</strong>}
+          {hoverTip.notes.trim() && <span>{hoverTip.notes}</span>}
         </div>
       )}
       {textEditor && textEditorScreen && (

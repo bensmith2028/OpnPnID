@@ -7,6 +7,7 @@ import { saveProjectAs } from '../io/projectIO';
 import { resetToDefaultLibrary } from '../library/db';
 import { describeError } from '../library/errors';
 import { Menu, MenuItem, MenuSeparator } from './Menu';
+import { CatalogDialog } from './CatalogDialog';
 import { notify } from './notice';
 import { guardUnsaved } from './unsavedGuard';
 
@@ -49,6 +50,7 @@ export function TopBar() {
   const dirty = useSketchStore((s) => s.dirty);
   const theme = useSketchStore((s) => s.theme);
   const toggleTheme = useSketchStore((s) => s.toggleTheme);
+  const [catalogOpen, setCatalogOpen] = useState(false);
 
   const fileName = filePath ? filePath.split(/[\\/]/).pop() : 'Untitled';
 
@@ -65,6 +67,7 @@ export function TopBar() {
   }, []);
 
   return (
+    <>
     <div className="toolbar">
       <div className="toolbar-brand">OpnPnID</div>
       <Menu label="File">
@@ -98,6 +101,9 @@ export function TopBar() {
           </div>
         )}
       </Menu>
+      <button className={catalogOpen ? 'active' : ''} onClick={() => setCatalogOpen(true)} title="The hardware catalog — every saved piece of hardware, editable and deletable">
+        Catalog
+      </button>
       <div className="toolbar-group">
         <button className="icon-button" onClick={undo} disabled={!canUndo} title={`Undo (${MOD}Z)`} aria-label="Undo">
           <svg {...ICON} aria-hidden="true">
@@ -118,6 +124,9 @@ export function TopBar() {
         {dirty ? ' •' : ''}
       </div>
     </div>
+    {/* Outside the bar so the bar's own button styling doesn't reach into the dialog. */}
+    {catalogOpen && <CatalogDialog onClose={() => setCatalogOpen(false)} />}
+    </>
   );
 }
 

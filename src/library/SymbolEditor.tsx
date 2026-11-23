@@ -34,6 +34,7 @@ import { exportSymbol, importSymbol } from '../io/symbolIO';
 import type { Id, SceneGraphJSON, SymbolGeometry, SymbolLine, Vec2 } from '../types/geometry';
 import { strokeWidth } from '../canvas/renderer';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
+import { HardwareDialog } from './HardwareDialog';
 import { PORT_TOOL, SHARED_TOOLS, type ToolDef, ToolRailView } from '../ui/ToolRail';
 import { WeightField, commonWeight } from '../ui/WeightField';
 import { resolveSymbol } from './builtinSymbols';
@@ -552,6 +553,8 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
   const [nameText, setNameText] = useState(category.name);
   /** Whether the "delete this component?" confirmation is up. */
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  /** Whether the component's hardware catalog entries are open. */
+  const [editingHardware, setEditingHardware] = useState(false);
   /** The family it belongs to — changing it here moves the component when the drawing is saved. */
   const [familyId, setFamilyId] = useState(category.familyId);
   const [families, setFamilies] = useState<db.Family[]>([]);
@@ -1518,6 +1521,13 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
               Export drawing…
             </button>
             <button
+              disabled={saving || loading}
+              onClick={() => setEditingHardware(true)}
+              title="The specific hardware (name + notes) in the hardware catalog for this component"
+            >
+              Hardware catalog…
+            </button>
+            <button
               className="symbol-editor-trash"
               disabled={saving || loading}
               onClick={() => setConfirmingDelete(true)}
@@ -1538,6 +1548,7 @@ export function SymbolEditor({ category, onClose, onSaved }: { category: db.Cate
           </button>
         </div>
       </div>
+      {editingHardware && <HardwareDialog category={{ ...category, name: nameText.trim() || category.name }} onClose={() => setEditingHardware(false)} />}
       {confirmingDelete && (
         <ConfirmDialog
           title={`Delete "${category.name}"?`}

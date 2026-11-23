@@ -42,10 +42,20 @@ export interface StoredSymbol {
   geometry: SymbolGeometry;
 }
 
+/** A specific piece of hardware for one component type — "Burkert 2076" — with free-text notes
+ * for requirements and attributes ("Viton seals, 24 VDC"). */
+export interface HardwareItem {
+  id: string;
+  categoryId: string;
+  name: string;
+  notes: string;
+}
+
 export interface LibraryData {
   families: Family[];
   categories: Category[];
   symbols: StoredSymbol[];
+  hardware: HardwareItem[];
 }
 
 // ---------------------------------------------------------------------------------
@@ -101,13 +111,21 @@ async function writeStored(data: LibraryData): Promise<void> {
 }
 
 function defaultData(): LibraryData {
-  return structuredClone(defaultLibrary) as unknown as LibraryData;
+  const data = structuredClone(defaultLibrary) as unknown as LibraryData;
+  data.hardware ??= [];
+  return data;
 }
 
 let loaded: Promise<LibraryData> | null = null;
 
 function load(): Promise<LibraryData> {
-  if (!loaded) loaded = readStored().then((stored) => stored ?? defaultData());
+  if (!loaded) {
+    loaded = readStored().then((stored) => {
+      // A library saved before hardware existed simply has none.
+      if (stored) stored.hardware ??= [];
+      return stored ?? defaultData();
+    });
+  }
   return loaded;
 }
 
@@ -181,9 +199,11 @@ export function deleteFamily(id: string): Promise<void> {
   return mutate((data) => {
     const doomed = data.categories.filter((c) => c.familyId === id);
     const symbolIds = new Set(doomed.map((c) => c.symbolId).filter((s): s is string => !!s));
+    const categoryIds = new Set(doomed.map((c) => c.id));
     data.families = data.families.filter((f) => f.id !== id);
     data.categories = data.categories.filter((c) => c.familyId !== id);
     data.symbols = data.symbols.filter((s) => !symbolIds.has(s.id));
+    data.hardware = data.hardware.filter((h) => !categoryIds.has(h.categoryId));
   });
 }
 
@@ -235,7 +255,40 @@ export function deleteCategory(id: string): Promise<void> {
   return mutate((data) => {
     const symbolId = data.categories.find((c) => c.id === id)?.symbolId;
     data.categories = data.categories.filter((c) => c.id !== id);
+    data.hardware = data.hardware.filter((h) => h.categoryId !== id);
     if (symbolId) data.symbols = data.symbols.filter((s) => s.id !== symbolId);
+  });
+}
+
+// ---------------------------------------------------------------------------------
+// Hardware — specific parts for a component type (name + free-text notes)
+// ---------------------------------------------------------------------------------
+
+export async function listHardware(categoryId: string): Promise<HardwareItem[]> {
+  return (await load()).hardware
+    .filter((h) => h.categoryId === categoryId)
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((h) => ({ ...h }));
+}
+
+/** Every hardware entry in the catalog, across all components. */
+export async function listAllHardware(): Promise<HardwareItem[]> {
+  return (await load()).hardware.map((h) => ({ ...h }));
+}
+
+export function upsertHardware(input: { id?: string; categoryId: string; name: string; notes?: string }): Promise<HardwareItem> {
+  return mutate((data) => {
+    const item: HardwareItem = { id: input.id ?? newId('hw'), categoryId: input.categoryId, name: input.name, notes: input.notes ?? '' };
+    const existing = data.hardware.find((h) => h.id === item.id);
+    if (existing) Object.assign(existing, item);
+    else data.hardware.push(item);
+    return { ...item };
+  });
+}
+
+export function deleteHardware(id: string): Promise<void> {
+  return mutate((data) => {
+    data.hardware = data.hardware.filter((h) => h.id !== id);
   });
 }
 
@@ -306,6 +359,7 @@ export async function collectExportable(categoryIds?: string[]) {
       family: data.families.find((f) => f.id === category.familyId) ?? null,
       category: { ...category },
       geometry: structuredClone(effectiveSymbol(category, data.symbols)),
+      hardware: data.hardware.filter((h) => h.categoryId === category.id).map((h) => ({ name: h.name, notes: h.notes })),
     }));
 }
 
@@ -317,6 +371,7 @@ export function importLibrary(file: LibraryFile): Promise<MergeSummary> {
     data.families = merged.families;
     data.categories = merged.categories;
     data.symbols = merged.symbols;
+    data.hardware = merged.hardware;
     return summary;
   });
 }
@@ -328,5 +383,6 @@ export function resetToDefaultLibrary(): Promise<void> {
     data.families = fresh.families;
     data.categories = fresh.categories;
     data.symbols = fresh.symbols;
+    data.hardware = fresh.hardware;
   });
 }
