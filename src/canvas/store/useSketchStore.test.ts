@@ -4,7 +4,7 @@ import { generatePlaceholderSymbol } from '../../library/builtinSymbols';
 import { MIN_SNAP_THRESHOLD_PX, useSketchStore } from './useSketchStore';
 
 function sampleSnapshot(portCount = 2): ComponentSnapshot {
-  return { familyName: 'Valve', categoryName: 'Test Valve', symbol: generatePlaceholderSymbol(portCount), realPart: null };
+  return { familyName: 'Valve', categoryName: 'Test Valve', symbol: generatePlaceholderSymbol(portCount) };
 }
 
 /** Fresh document + clipboard before every test — the store is a module-level singleton,
@@ -26,7 +26,7 @@ describe('copySelection / pasteSelection', () => {
 
   it('copies the selected components and pastes them back offset, with fresh unique tags', () => {
     const { placeComponent } = useSketchStore.getState();
-    placeComponent({ categoryId: 'cat1', realPartId: null, position: { x: 0, y: 0 }, tag: 'V-101', snapshot: sampleSnapshot() });
+    placeComponent({ categoryId: 'cat1', position: { x: 0, y: 0 }, tag: 'V-101', snapshot: sampleSnapshot() });
     const placedId = [...useSketchStore.getState().selection.componentIds][0];
     useSketchStore.setState((s) => ({ selection: { ...s.selection, componentIds: new Set([placedId]) } }));
 
@@ -48,7 +48,7 @@ describe('copySelection / pasteSelection', () => {
 
   it('cascades the offset further on each repeated paste', () => {
     const { placeComponent } = useSketchStore.getState();
-    placeComponent({ categoryId: 'cat1', realPartId: null, position: { x: 0, y: 0 }, tag: 'V-101', snapshot: sampleSnapshot() });
+    placeComponent({ categoryId: 'cat1', position: { x: 0, y: 0 }, tag: 'V-101', snapshot: sampleSnapshot() });
     const placedId = [...useSketchStore.getState().selection.componentIds][0];
     useSketchStore.setState((s) => ({ selection: { ...s.selection, componentIds: new Set([placedId]) } }));
     useSketchStore.getState().copySelection();
@@ -95,33 +95,6 @@ describe('copySelection / pasteSelection', () => {
     expect(useSketchStore.getState().graph.components.size).toBe(before);
   });
 
-  it('carries the assigned real part (manufacturer/model/specs/datasheet) over to the pasted copy', () => {
-    const withRealPart: ComponentSnapshot = {
-      ...sampleSnapshot(),
-      realPart: {
-        manufacturer: 'Swagelok',
-        modelNumber: 'SS-83XS6',
-        datasheetUrl: 'https://example.com/ds.pdf',
-        specs: { cv: 2.5, fail_position: 'FC' },
-      },
-    };
-    const { placeComponent } = useSketchStore.getState();
-    placeComponent({ categoryId: 'cat1', realPartId: 'rp1', position: { x: 0, y: 0 }, tag: 'V-101', snapshot: withRealPart });
-    const placedId = [...useSketchStore.getState().selection.componentIds][0];
-    useSketchStore.setState((s) => ({ selection: { ...s.selection, componentIds: new Set([placedId]) } }));
-
-    useSketchStore.getState().copySelection();
-    useSketchStore.getState().pasteSelection();
-    const { graph, selection } = useSketchStore.getState();
-    const pasted = graph.components.get([...selection.componentIds][0]!)!;
-
-    expect(pasted.realPartId).toBe('rp1');
-    expect(pasted.snapshot.realPart).toEqual(withRealPart.realPart);
-    // Independent copy, not a shared reference — editing the pasted specs must not also
-    // change the original's.
-    expect(pasted.snapshot.realPart).not.toBe(graph.components.get(placedId)!.snapshot.realPart);
-  });
-
   it('copies a selected line along with its endpoints (regression: copy/paste used to only carry components, dropping any pipe segments)', () => {
     const { graph } = useSketchStore.getState();
     const a = graph.addPoint(0, 0);
@@ -152,7 +125,7 @@ describe('copySelection / pasteSelection', () => {
     const a = graph.addPoint(0, 0);
     const b = graph.addPoint(10, 0);
     const arc = graph.addArc(a.id, b.id, 0.5)!;
-    placeComponent({ categoryId: 'cat1', realPartId: null, position: { x: 100, y: 100 }, tag: 'V-101', snapshot: sampleSnapshot() });
+    placeComponent({ categoryId: 'cat1', position: { x: 100, y: 100 }, tag: 'V-101', snapshot: sampleSnapshot() });
     const componentId = [...useSketchStore.getState().selection.componentIds][0];
 
     useSketchStore.setState((s) => ({
@@ -186,7 +159,7 @@ describe('copySelection / pasteSelection', () => {
 
   it('reconnects a copied line to the pasted copy of the component it was attached to (regression: a line touching a component port used to be dropped from the clipboard entirely)', () => {
     const { graph, placeComponent } = useSketchStore.getState();
-    placeComponent({ categoryId: 'cat1', realPartId: null, position: { x: 0, y: 0 }, tag: 'V-101', snapshot: sampleSnapshot() });
+    placeComponent({ categoryId: 'cat1', position: { x: 0, y: 0 }, tag: 'V-101', snapshot: sampleSnapshot() });
     const componentId = [...useSketchStore.getState().selection.componentIds][0];
     const instance = graph.components.get(componentId)!;
     const portPointId = instance.connections[0].pointId;
@@ -219,7 +192,7 @@ describe('copySelection / pasteSelection', () => {
 
   it('still copies a line attached to a component port as a (now detached) line when only the line is selected, not the component', () => {
     const { graph, placeComponent } = useSketchStore.getState();
-    placeComponent({ categoryId: 'cat1', realPartId: null, position: { x: 0, y: 0 }, tag: 'V-101', snapshot: sampleSnapshot() });
+    placeComponent({ categoryId: 'cat1', position: { x: 0, y: 0 }, tag: 'V-101', snapshot: sampleSnapshot() });
     const componentId = [...useSketchStore.getState().selection.componentIds][0];
     const portPointId = graph.components.get(componentId)!.connections[0].pointId;
     const free = graph.addPoint(50, 0);
@@ -244,7 +217,7 @@ describe('setComponentName', () => {
   /** Places one component and returns its id, selected — the starting point for both
    * tests below. */
   function placeOne(): string {
-    useSketchStore.getState().placeComponent({ categoryId: 'cat1', realPartId: null, position: { x: 0, y: 0 }, tag: 'V-101', snapshot: sampleSnapshot() });
+    useSketchStore.getState().placeComponent({ categoryId: 'cat1', position: { x: 0, y: 0 }, tag: 'V-101', snapshot: sampleSnapshot() });
     return [...useSketchStore.getState().selection.componentIds][0];
   }
 
@@ -297,25 +270,25 @@ describe('setSnapThresholdPx', () => {
  * one click leaves behind is worth pinning down. */
 describe('armComponent', () => {
   it('switches to the component tool and remembers what to place', () => {
-    useSketchStore.getState().armComponent('cat1', null);
+    useSketchStore.getState().armComponent('cat1');
     expect(useSketchStore.getState().activeTool).toBe('component');
-    expect(useSketchStore.getState().armedComponent).toEqual({ categoryId: 'cat1', realPartId: null });
+    expect(useSketchStore.getState().armedComponent).toEqual({ categoryId: 'cat1' });
   });
 
   it('clears the selection, so the armed click lands on the canvas instead of dragging whatever was selected', () => {
     useSketchStore.setState((s) => ({ selection: { ...s.selection, lineIds: new Set(['ln1']) } }));
-    useSketchStore.getState().armComponent('cat1', null);
+    useSketchStore.getState().armComponent('cat1');
     expect(useSketchStore.getState().selection.lineIds.size).toBe(0);
   });
 
   it('re-arms to the newest category when a second row is clicked without placing the first', () => {
-    useSketchStore.getState().armComponent('cat1', null);
-    useSketchStore.getState().armComponent('cat2', 'part9');
-    expect(useSketchStore.getState().armedComponent).toEqual({ categoryId: 'cat2', realPartId: 'part9' });
+    useSketchStore.getState().armComponent('cat1');
+    useSketchStore.getState().armComponent('cat2');
+    expect(useSketchStore.getState().armedComponent).toEqual({ categoryId: 'cat2' });
   });
 
   it('is disarmed by picking any other tool, so a stray canvas click can\'t drop a component later', () => {
-    useSketchStore.getState().armComponent('cat1', null);
+    useSketchStore.getState().armComponent('cat1');
     useSketchStore.getState().setTool('select');
     expect(useSketchStore.getState().armedComponent).toBeNull();
   });
@@ -344,7 +317,7 @@ describe('setSelection auto-closing the Library panel', () => {
 describe('selectAll', () => {
   it('selects every point, line, arc, component and text annotation in the document', () => {
     const { placeComponent, graph } = useSketchStore.getState();
-    placeComponent({ categoryId: 'cat1', realPartId: null, position: { x: 0, y: 0 }, tag: 'V-101', snapshot: sampleSnapshot() });
+    placeComponent({ categoryId: 'cat1', position: { x: 0, y: 0 }, tag: 'V-101', snapshot: sampleSnapshot() });
     graph.addPoint(5, 5);
     const [a, b] = [graph.addPoint(0, 10), graph.addPoint(10, 10)];
     graph.addLine(a.id, b.id);
@@ -360,7 +333,7 @@ describe('selectAll', () => {
 
   it('closes the Library panel, same as any other non-empty selection', () => {
     useSketchStore.setState({ libraryPanelOpen: true });
-    useSketchStore.getState().placeComponent({ categoryId: 'cat1', realPartId: null, position: { x: 0, y: 0 }, tag: 'V-101', snapshot: sampleSnapshot() });
+    useSketchStore.getState().placeComponent({ categoryId: 'cat1', position: { x: 0, y: 0 }, tag: 'V-101', snapshot: sampleSnapshot() });
     useSketchStore.setState({ libraryPanelOpen: true }); // placeComponent bypasses the auto-close; reset for this test
     useSketchStore.getState().selectAll();
     expect(useSketchStore.getState().libraryPanelOpen).toBe(false);

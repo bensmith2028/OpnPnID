@@ -5,7 +5,7 @@ import { arcTangentDirection, isAngleInSweep } from './geometry';
 import { SceneGraph } from './sceneGraph';
 
 function sampleSnapshot(portCount = 2): ComponentSnapshot {
-  return { familyName: 'Valve', categoryName: 'Test Valve', symbol: generatePlaceholderSymbol(portCount), realPart: null };
+  return { familyName: 'Valve', categoryName: 'Test Valve', symbol: generatePlaceholderSymbol(portCount) };
 }
 
 describe('SceneGraph', () => {
@@ -416,7 +416,6 @@ describe('SceneGraph components', () => {
     const g = new SceneGraph();
     const instance = g.addComponent({
       categoryId: 'gc1',
-      realPartId: null,
       tag: 'V-101',
       position: { x: 100, y: 50 },
       rotation: 0,
@@ -433,7 +432,6 @@ describe('SceneGraph components', () => {
     const g = new SceneGraph();
     const instance = g.addComponent({
       categoryId: 'gc1',
-      realPartId: null,
       tag: 'V-102',
       position: { x: 0, y: 0 },
       rotation: Math.PI / 2,
@@ -450,7 +448,6 @@ describe('SceneGraph components', () => {
     const g = new SceneGraph();
     const instance = g.addComponent({
       categoryId: 'gc1',
-      realPartId: null,
       tag: 'V-102b',
       position: { x: 100, y: 50 },
       rotation: 0,
@@ -466,7 +463,6 @@ describe('SceneGraph components', () => {
     const g = new SceneGraph();
     const instance = g.addComponent({
       categoryId: 'gc1',
-      realPartId: null,
       tag: 'V-102c',
       position: { x: 0, y: 0 },
       rotation: 0,
@@ -482,7 +478,6 @@ describe('SceneGraph components', () => {
     const g = new SceneGraph();
     const instance = g.addComponent({
       categoryId: 'gc1',
-      realPartId: null,
       tag: 'V-103',
       position: { x: 0, y: 0 },
       rotation: 0,
@@ -501,7 +496,6 @@ describe('SceneGraph components', () => {
     const g = new SceneGraph();
     const instance = g.addComponent({
       categoryId: 'gc1',
-      realPartId: null,
       tag: 'V-104',
       position: { x: 0, y: 0 },
       rotation: 0,
@@ -523,7 +517,6 @@ describe('SceneGraph components', () => {
     const g = new SceneGraph();
     const instance = g.addComponent({
       categoryId: 'gc1',
-      realPartId: null,
       tag: 'V-105',
       position: { x: 0, y: 0 },
       rotation: 0,
@@ -540,7 +533,6 @@ describe('SceneGraph components', () => {
     const g = new SceneGraph();
     const instance = g.addComponent({
       categoryId: 'gc1',
-      realPartId: null,
       tag: 'V-106',
       position: { x: 0, y: 0 },
       rotation: 0,
@@ -553,7 +545,6 @@ describe('SceneGraph components', () => {
     const g = new SceneGraph();
     const instance = g.addComponent({
       categoryId: 'gc1',
-      realPartId: null,
       tag: 'V-107',
       position: { x: 0, y: 0 },
       rotation: 0,
@@ -576,7 +567,6 @@ describe('SceneGraph components', () => {
     const g = new SceneGraph();
     const instance = g.addComponent({
       categoryId: 'gc1',
-      realPartId: null,
       tag: 'V-107b',
       position: { x: 0, y: 0 },
       rotation: 0,
@@ -593,7 +583,6 @@ describe('SceneGraph components', () => {
     const g = new SceneGraph();
     const instance = g.addComponent({
       categoryId: 'gc1',
-      realPartId: null,
       tag: 'V-108',
       position: { x: 0, y: 0 },
       rotation: 0,
@@ -609,7 +598,6 @@ describe('SceneGraph components', () => {
     const g = new SceneGraph();
     g.addComponent({
       categoryId: 'gc1',
-      realPartId: 'rp1',
       tag: 'V-109',
       position: { x: 10, y: 20 },
       rotation: 0.5,
@@ -630,7 +618,6 @@ describe('SceneGraph components', () => {
     const g = new SceneGraph();
     const instance = g.addComponent({
       categoryId: 'gc1',
-      realPartId: null,
       tag: 'V-110',
       position: { x: 0, y: 0 },
       rotation: 0,

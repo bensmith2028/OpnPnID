@@ -207,7 +207,13 @@ export function parseSymbolFile(text: string): ImportedSymbol {
   } catch {
     fail("That file isn't valid JSON, so it can't be an OpnPnID symbol file.");
   }
+  return parseSymbolObject(parsed);
+}
 
+/** The validation half of `parseSymbolFile`, for callers that already hold parsed JSON —
+ * the library file format embeds one of these per component. Same contract: throws an
+ * `Error` fit to show the user, and returns geometry already normalized to local units. */
+export function parseSymbolObject(parsed: unknown): ImportedSymbol {
   // Identify the file before judging its contents, so a stray .json (or a project file
   // picked by mistake) gets a clearer answer than "damaged".
   if (!isRecord(parsed) || !isFiniteNumber(parsed.version) || !isRecord(parsed.geometry)) {

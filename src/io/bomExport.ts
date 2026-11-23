@@ -1,23 +1,20 @@
 /**
- * Bill-of-Materials CSV export — one of the app's originally-planned output file types
- * alongside the project file and PDF (see pdfExport.ts). Two flavors, per the original
- * spec: a per-instance "detailed" listing and a grouped/quantity-counted "summary".
+ * Bill-of-Materials CSV export. Two flavors: a per-instance "detailed" listing (one row per
+ * placed component) and a grouped "summary" with a quantity per kind of component.
  *
- * Row-building/CSV-formatting are pure and DOM-free (unit-tested in bomExport.test.ts);
- * the exported `exportBom*` functions are the thin async save-dialog wrappers, following
- * the same save()+writeTextFile() pattern as projectIO.ts.
+ * Row-building/CSV-formatting are pure and DOM-free (unit-tested in bomExport.test.ts); the
+ * exported `exportBom*` functions are the thin download wrappers.
  */
-import { save } from '@tauri-apps/plugin-dialog';
-import { writeTextFile } from '@tauri-apps/plugin-fs';
-import { rowToCsvLine } from '../library/csv';
 import { useSketchStore } from '../canvas/store/useSketchStore';
-import type { ComponentInstance, RealPartSnapshot } from '../types/geometry';
+import type { ComponentInstance } from '../types/geometry';
+import { downloadText } from './fileTransfer';
 
-/** Flattens a real part's specs into one readable string, e.g. `cv=2.5; fail_position=FC`. */
-function formatSpecs(specs: RealPartSnapshot['specs']): string {
-  return Object.entries(specs)
-    .map(([key, value]) => `${key}=${value}`)
-    .join('; ');
+function csvEscape(value: string): string {
+  return /[",\n\r]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+}
+
+export function rowToCsvLine(values: (string | number | null | undefined)[]): string {
+  return values.map((v) => csvEscape(v === null || v === undefined ? '' : String(v))).join(',');
 }
 
 export interface DetailedBomRow {
@@ -25,105 +22,59 @@ export interface DetailedBomRow {
   name: string;
   family: string;
   category: string;
-  manufacturer: string;
-  modelNumber: string;
-  specs: string;
-  datasheetUrl: string;
 }
 
-/** One row per placed instance. An instance with no real part assigned still gets a row
- * (it still belongs in the BOM as "needs a part picked") with the part-derived columns blank.
- * `name` is optional on the instance (never auto-generated — see ComponentInstance.name),
- * so an unnamed component gets a blank cell, same as an unassigned part's columns. */
+/** One row per placed instance. `name` is optional on the instance (never auto-generated —
+ * see ComponentInstance.name), so an unnamed component gets a blank cell. */
 export function buildDetailedRows(components: ComponentInstance[]): DetailedBomRow[] {
-  return components.map((instance) => {
-    const part = instance.snapshot.realPart;
-    return {
-      tag: instance.tag,
-      name: instance.name ?? '',
-      family: instance.snapshot.familyName,
-      category: instance.snapshot.categoryName,
-      manufacturer: part?.manufacturer ?? '',
-      modelNumber: part?.modelNumber ?? '',
-      specs: part ? formatSpecs(part.specs) : '',
-      datasheetUrl: part?.datasheetUrl ?? '',
-    };
-  });
+  return components.map((instance) => ({
+    tag: instance.tag,
+    name: instance.name ?? '',
+    family: instance.snapshot.familyName,
+    category: instance.snapshot.categoryName,
+  }));
 }
 
 export interface SummaryBomRow {
   family: string;
   category: string;
-  manufacturer: string;
-  modelNumber: string;
   quantity: number;
-  specs: string;
-  datasheetUrl: string;
 }
 
-/** Groups instances by (Category, Manufacturer, Model Number) into one row each with a
- * quantity count. Deliberately carries no Name column: a name describes one instance's
- * service ("Reactor feed pump"), so it has no meaning for a group of several — it stays
- * a detailed-listing column only. Instances with no real part assigned group by Category alone
- * (Manufacturer/Model blank), separately from any assigned-part group in that category.
- * The join key is JSON-encoded (rather than plain-concatenated) so field values
+/** Groups instances by component kind into one row each with a quantity. Deliberately
+ * carries no Name column: a name describes one instance's service ("Reactor feed pump"), so
+ * it has no meaning for a group of several. The join key is JSON-encoded so values
  * containing arbitrary characters can never collide across a different combination. */
 export function buildSummaryRows(components: ComponentInstance[]): SummaryBomRow[] {
   const groups = new Map<string, SummaryBomRow>();
   for (const instance of components) {
-    const part = instance.snapshot.realPart;
-    const manufacturer = part?.manufacturer ?? '';
-    const modelNumber = part?.modelNumber ?? '';
-    const key = JSON.stringify([instance.snapshot.categoryName, manufacturer, modelNumber]);
+    const key = JSON.stringify([instance.snapshot.familyName, instance.snapshot.categoryName]);
     const existing = groups.get(key);
-    if (existing) {
-      existing.quantity += 1;
-      continue;
-    }
-    groups.set(key, {
-      family: instance.snapshot.familyName,
-      category: instance.snapshot.categoryName,
-      manufacturer,
-      modelNumber,
-      quantity: 1,
-      specs: part ? formatSpecs(part.specs) : '',
-      datasheetUrl: part?.datasheetUrl ?? '',
-    });
+    if (existing) existing.quantity += 1;
+    else groups.set(key, { family: instance.snapshot.familyName, category: instance.snapshot.categoryName, quantity: 1 });
   }
   return [...groups.values()];
 }
 
-const DETAILED_HEADERS = ['Tag', 'Name', 'Family', 'Category', 'Manufacturer', 'Model Number', 'Specs', 'Datasheet URL'];
-const SUMMARY_HEADERS = ['Family', 'Category', 'Manufacturer', 'Model Number', 'Quantity', 'Specs', 'Datasheet URL'];
+const DETAILED_HEADERS = ['Tag', 'Name', 'Family', 'Component'];
+const SUMMARY_HEADERS = ['Family', 'Component', 'Quantity'];
 
 export function detailedRowsToCsv(rows: DetailedBomRow[]): string {
-  const lines = [
-    rowToCsvLine(DETAILED_HEADERS),
-    ...rows.map((r) => rowToCsvLine([r.tag, r.name, r.family, r.category, r.manufacturer, r.modelNumber, r.specs, r.datasheetUrl])),
-  ];
+  const lines = [rowToCsvLine(DETAILED_HEADERS), ...rows.map((r) => rowToCsvLine([r.tag, r.name, r.family, r.category]))];
   return lines.join('\n') + '\n';
 }
 
 export function summaryRowsToCsv(rows: SummaryBomRow[]): string {
-  const lines = [
-    rowToCsvLine(SUMMARY_HEADERS),
-    ...rows.map((r) => rowToCsvLine([r.family, r.category, r.manufacturer, r.modelNumber, r.quantity, r.specs, r.datasheetUrl])),
-  ];
+  const lines = [rowToCsvLine(SUMMARY_HEADERS), ...rows.map((r) => rowToCsvLine([r.family, r.category, r.quantity]))];
   return lines.join('\n') + '\n';
 }
 
 export async function exportBomDetailed(): Promise<void> {
   const components = [...useSketchStore.getState().graph.components.values()];
-  const csv = detailedRowsToCsv(buildDetailedRows(components));
-  const path = await save({ filters: [{ name: 'CSV', extensions: ['csv'] }], defaultPath: 'bom-detailed.csv' });
-  if (!path) return;
-  await writeTextFile(path, csv);
+  downloadText('bom-detailed.csv', detailedRowsToCsv(buildDetailedRows(components)), 'text/csv');
 }
 
 export async function exportBomSummary(): Promise<void> {
   const components = [...useSketchStore.getState().graph.components.values()];
-  const csv = summaryRowsToCsv(buildSummaryRows(components));
-  const path = await save({ filters: [{ name: 'CSV', extensions: ['csv'] }], defaultPath: 'bom-summary.csv' });
-  if (!path) return;
-  await writeTextFile(path, csv);
+  downloadText('bom-summary.csv', summaryRowsToCsv(buildSummaryRows(components)), 'text/csv');
 }

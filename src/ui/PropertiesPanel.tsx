@@ -1,4 +1,3 @@
-import { openUrl } from '@tauri-apps/plugin-opener';
 import { useEffect, useState } from 'react';
 import type { AxisLock, Id, Line } from '../types/geometry';
 import { hasCustomLabelOffset } from '../canvas/componentLabels';
@@ -325,9 +324,6 @@ function ComponentProperties({ componentId }: { componentId: Id }) {
     else setRotationText(normalizeDegrees(instance.rotation * RAD_TO_DEG).toFixed(1));
   };
 
-  const realPart = instance.snapshot.realPart;
-  const specEntries = realPart ? Object.entries(realPart.specs) : [];
-
   return (
     <div className="properties-panel">
       <h3>Component</h3>
@@ -373,35 +369,6 @@ function ComponentProperties({ componentId }: { componentId: Id }) {
           </div>
         </div>
       )}
-
-      <div className="field">
-        <span>Real part</span>
-        {realPart ? (
-          <>
-            <div className="readonly-value">
-              {realPart.manufacturer} {realPart.modelNumber}
-            </div>
-            {specEntries.length > 0 && (
-              <ul className="component-specs">
-                {specEntries.map(([key, value]) => (
-                  <li key={key}>
-                    <span>{key}</span>
-                    <span>{String(value)}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {realPart.datasheetUrl && (
-              <button onClick={() => void openUrl(realPart.datasheetUrl!)}>View Datasheet</button>
-            )}
-          </>
-        ) : (
-          <div className="readonly-value">No part assigned</div>
-        )}
-        <div className="fillet-row">
-          <button onClick={() => useSketchStore.getState().openRealHardwareModal(componentId)}>Real Hardware…</button>
-        </div>
-      </div>
     </div>
   );
 }

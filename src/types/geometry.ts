@@ -137,20 +137,11 @@ export interface SymbolGeometry {
 
 /** A snapshot of the library data a placed instance referenced, embedded so the project
  * file stays meaningful even without the library present (moved machines, edited/deleted
- * library entries, shared files). `realPart` is null until a specific part is assigned —
- * placing a component only requires picking its category (see the plan). */
-export interface RealPartSnapshot {
-  manufacturer: string;
-  modelNumber: string;
-  datasheetUrl?: string;
-  specs: Record<string, string | number | boolean>;
-}
-
+ * library entries, shared files). */
 export interface ComponentSnapshot {
   familyName: string;
   categoryName: string;
   symbol: SymbolGeometry;
-  realPart: RealPartSnapshot | null;
 }
 
 /**
@@ -163,7 +154,6 @@ export interface ComponentSnapshot {
 export interface ComponentInstance {
   id: Id;
   categoryId: string;
-  realPartId: string | null;
   tag: string;
   /** Free-text descriptive name for this instance ("Reactor feed pump"), separate from
    * the ISA-lite `tag` that identifies it — a service description, not an id, so

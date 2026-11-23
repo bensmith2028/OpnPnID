@@ -5,7 +5,7 @@ import type { ComponentSnapshot } from '../types/geometry';
 import { PROJECT_FORMAT_VERSION, parseProjectFile, serializeProject } from './projectFormat';
 
 function sampleSnapshot(portCount = 2): ComponentSnapshot {
-  return { familyName: 'Valve', categoryName: 'Test Valve', symbol: generatePlaceholderSymbol(portCount), realPart: null };
+  return { familyName: 'Valve', categoryName: 'Test Valve', symbol: generatePlaceholderSymbol(portCount) };
 }
 
 /** A small but complete drawing: a pipe, an arc, and a component with a pipe on one port. */
@@ -18,7 +18,6 @@ function sampleGraph(): SceneGraph {
   g.addArc(b.id, c.id, 0.5);
   const component = g.addComponent({
     categoryId: 'cat',
-    realPartId: null,
     tag: 'V-101',
     position: { x: 40, y: 40 },
     rotation: Math.PI / 2,

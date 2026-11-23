@@ -2,16 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useSketchStore } from '../canvas/store/useSketchStore';
 import { guardUnsaved, performGuardedAction } from './unsavedGuard';
 
-// The real modules reach for native dialogs and the Tauri shell, neither of which exists
-// here — and what's under test is only which of them gets called, and when.
+// The real modules reach for file pickers, which don't exist here — and what's under test is only which of them gets called, and when.
 const newProject = vi.fn();
 const openProject = vi.fn(async () => {});
-const quitApp = vi.fn();
 vi.mock('../io/projectIO', () => ({
   newProject: () => newProject(),
   openProject: () => openProject(),
 }));
-vi.mock('../platform/appClose', () => ({ quitApp: () => quitApp() }));
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -32,7 +29,7 @@ describe('guarding the actions that discard the drawing', () => {
     expect(useSketchStore.getState().pendingGuardedAction).toBeNull(); // never prompted
   });
 
-  it.each(['quit', 'new', 'open'] as const)('holds %s back for the prompt when the drawing is dirty', async (action) => {
+  it.each(['new', 'open'] as const)('holds %s back for the prompt when the drawing is dirty', async (action) => {
     makeDirty();
     await guardUnsaved(action);
 
@@ -41,7 +38,6 @@ describe('guarding the actions that discard the drawing', () => {
     // prompt is answered.
     expect(newProject).not.toHaveBeenCalled();
     expect(openProject).not.toHaveBeenCalled();
-    expect(quitApp).not.toHaveBeenCalled();
     expect(useSketchStore.getState().dirty).toBe(true);
   });
 

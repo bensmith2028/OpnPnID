@@ -485,7 +485,6 @@ export class SceneGraph {
    */
   addComponent(params: {
     categoryId: string;
-    realPartId: string | null;
     tag: string;
     /** Optional descriptive name — only ever set by a caller reinstating one (paste); a
      * freshly placed component starts unnamed. */
@@ -514,7 +513,6 @@ export class SceneGraph {
     const instance = this.cloneComponent({
       id,
       categoryId: params.categoryId,
-      realPartId: params.realPartId,
       tag: params.tag,
       ...(params.name ? { name: params.name } : {}),
       ...(params.tagOffset ? { tagOffset: params.tagOffset } : {}),
@@ -569,7 +567,7 @@ export class SceneGraph {
   }
 
   private cloneSnapshot(s: ComponentSnapshot): ComponentSnapshot {
-    return { ...s, realPart: s.realPart ? { ...s.realPart, specs: { ...s.realPart.specs } } : null };
+    return { ...s };
   }
 
   private cloneComponent(c: ComponentInstance): ComponentInstance {
@@ -611,20 +609,6 @@ export class SceneGraph {
     const trimmed = name.trim();
     if (trimmed) instance.name = trimmed;
     else delete instance.name;
-  }
-
-  /** Reassigns a placed instance's real part — the Properties Panel's "Change Part"
-   * picker is scoped to the instance's own category (a category's port count/symbol are
-   * fixed by construction, so real parts within it are always port-compatible), but this
-   * still refuses if the port count would somehow differ, as a defensive backstop.
-   * Returns whether it succeeded. */
-  setComponentPart(id: Id, realPartId: string | null, snapshot: ComponentSnapshot): boolean {
-    const instance = this.components.get(id);
-    if (!instance) return false;
-    if (snapshot.symbol.ports.length !== instance.connections.length) return false;
-    instance.realPartId = realPartId;
-    instance.snapshot = this.cloneSnapshot(snapshot);
-    return true;
   }
 
   /** Places a free text annotation centered on (x, y). Content is stored trimmed, so

@@ -7,10 +7,10 @@ import { SceneGraph } from '../sceneGraph';
 export type ToolName = 'select' | 'line' | 'arc' | 'point' | 'circle' | 'text' | 'component';
 
 /** Something the user asked for that throws away the current drawing if it goes ahead:
- * closing/quitting the app, starting a new drawing, or opening another project. Each is
+ * starting a new drawing or opening another project. Each is
  * put through the unsaved-changes prompt when there are edits to lose — see
  * ui/unsavedGuard.ts, which is what maps one of these to what it actually does. */
-export type GuardedAction = 'quit' | 'new' | 'open';
+export type GuardedAction = 'new' | 'open';
 
 /** The app's UI theme (canvas + chrome). Print/PDF export (a future feature) should
  * always render with 'light' regardless of this — see renderer.ts's palette comment. */
@@ -55,19 +55,17 @@ function loadInitialTheme(): Theme {
   return window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
 }
 
-/** Which category (and optionally a specific real part) the Component tool is "loaded"
+/** Which category the Component tool is "loaded"
  * with — set by picking one in the Library panel, cleared whenever the active tool
  * changes away from 'component'. */
 export interface ArmedComponent {
   categoryId: string;
-  realPartId: string | null;
 }
 
 /** One copied component, captured by value (not by id) so later edits/deletes of the
  * original don't corrupt or invalidate the clipboard — see copySelection. */
 interface ClipboardComponent {
   categoryId: string;
-  realPartId: string | null;
   snapshot: ComponentSnapshot;
   tag: string;
   name?: string;
@@ -172,10 +170,6 @@ interface SketchStoreState {
   /** Whether the Library panel is shown (replaces the Properties Panel in the same
    * sidebar slot while open). */
   libraryPanelOpen: boolean;
-  /** Id of the placed component the RealHardwareModal is open for, or null when closed —
-   * opened by double-clicking a component on the canvas (see SketchCanvas) or from its
-   * Properties Panel entry. */
-  realHardwareModalComponentId: Id | null;
   /** Last-copied selection (Ctrl/Cmd+C — components *and* any selected lines/arcs/points/text),
    * or null if nothing's been copied yet this session. Not persisted with the project — an
    * in-app clipboard, not the OS one, so paste only ever targets this same document. */
@@ -194,13 +188,10 @@ interface SketchStoreState {
   future: HistoryEntry[];
 
   setTool: (tool: ToolName) => void;
-  /** Loads the Component tool with a category (+ optional real part) and switches to it
+  /** Loads the Component tool with a category and switches to it
    * in one step — what the Library panel's "Place" action calls. */
-  armComponent: (categoryId: string, realPartId: string | null) => void;
+  armComponent: (categoryId: string) => void;
   toggleLibraryPanel: () => void;
-  /** Opens the real-hardware assignment modal for a placed component instance. */
-  openRealHardwareModal: (componentId: Id) => void;
-  closeRealHardwareModal: () => void;
   setPendingGuardedAction: (action: GuardedAction | null) => void;
   setCamera: (camera: CameraState) => void;
   setSelection: (selection: Selection) => void;
@@ -241,7 +232,6 @@ interface SketchStoreState {
   applyFillet: (pointId: Id, radius: number) => boolean;
   placeComponent: (params: {
     categoryId: string;
-    realPartId: string | null;
     position: Vec2;
     tag: string;
     snapshot: ComponentSnapshot;
@@ -273,10 +263,6 @@ interface SketchStoreState {
    * then selects the newly-pasted items so the whole batch can be dragged as a group right
    * away. No-op if the clipboard is empty. */
   pasteSelection: () => void;
-  /** Reassigns a placed instance to a different real part within the same category.
-   * Refuses (returns false) if the port count would differ from what's currently placed
-   * — see SceneGraph.setComponentPart. */
-  setComponentPart: (componentId: Id, realPartId: string | null, snapshot: ComponentSnapshot) => boolean;
   deleteSelection: () => void;
   setFilePath: (path: string | null) => void;
   markSaved: () => void;
@@ -295,7 +281,6 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
   theme: loadInitialTheme(),
   armedComponent: null,
   libraryPanelOpen: false,
-  realHardwareModalComponentId: null,
   pendingGuardedAction: null,
   clipboard: null,
   pasteCount: 0,
@@ -305,11 +290,8 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
   future: [],
 
   setTool: (tool) => set({ activeTool: tool, selection: emptySelection(), armedComponent: tool === 'component' ? get().armedComponent : null }),
-  armComponent: (categoryId, realPartId) =>
-    set({ activeTool: 'component', armedComponent: { categoryId, realPartId }, selection: emptySelection() }),
+  armComponent: (categoryId) => set({ activeTool: 'component', armedComponent: { categoryId }, selection: emptySelection() }),
   toggleLibraryPanel: () => set((s) => ({ libraryPanelOpen: !s.libraryPanelOpen })),
-  openRealHardwareModal: (componentId) => set({ realHardwareModalComponentId: componentId }),
-  closeRealHardwareModal: () => set({ realHardwareModalComponentId: null }),
   setPendingGuardedAction: (action) => set({ pendingGuardedAction: action }),
   setCamera: (camera) => set({ camera }),
   // Selecting a point/line/arc/component (to edit its length/angle/etc. in the
@@ -470,10 +452,10 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
     return true;
   },
 
-  placeComponent: ({ categoryId, realPartId, position, tag, snapshot }) => {
+  placeComponent: ({ categoryId, position, tag, snapshot }) => {
     const { graph, componentScale } = get();
     const before = graph.toJSON();
-    const instance = graph.addComponent({ categoryId, realPartId, tag, position, rotation: 0, snapshot, scaleFactor: componentScale });
+    const instance = graph.addComponent({ categoryId, tag, position, rotation: 0, snapshot, scaleFactor: componentScale });
     set({ selection: { ...emptySelection(), componentIds: new Set([instance.id]) } });
     get().commit(before);
   },
@@ -531,13 +513,6 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
     get().commit(before);
   },
 
-  setComponentPart: (componentId, realPartId, snapshot) => {
-    const before = get().graph.toJSON();
-    const ok = get().graph.setComponentPart(componentId, realPartId, snapshot);
-    if (ok) get().commit(before);
-    return ok;
-  },
-
   copySelection: () => {
     const { graph, selection } = get();
     const components: ClipboardComponent[] = [];
@@ -546,11 +521,9 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
       const instance = graph.components.get(id);
       if (!instance) continue;
       componentIndexById.set(id, components.length);
-      // Deep-cloned, not a spread — snapshot.realPart.specs is a nested object, and the
-      // clipboard must survive independently of any later edit to the original.
+      // Deep-cloned so the clipboard survives independently of any later edit to the original.
       components.push({
         categoryId: instance.categoryId,
-        realPartId: instance.realPartId,
         snapshot: cloneSnapshot(instance.snapshot),
         tag: instance.tag,
         name: instance.name,
@@ -650,7 +623,6 @@ export const useSketchStore = create<SketchStoreState>((set, get) => ({
       existingTags.add(tag);
       const instance = graph.addComponent({
         categoryId: item.categoryId,
-        realPartId: item.realPartId,
         tag,
         // The descriptive name *is* carried verbatim — unlike the tag it's not an
         // identifier, so a copy sharing its original's name is correct, not a clash.

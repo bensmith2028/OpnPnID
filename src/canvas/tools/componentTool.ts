@@ -6,8 +6,7 @@ import { useSketchStore } from '../store/useSketchStore';
 import type { ToolCtx } from './drawLineTool';
 import { worldThreshold } from './drawLineTool';
 
-/** Click-to-place, like the Point/Circle tools, using whichever category (and optional
- * real part) is "armed" via the Library panel. Unlike those tools this needs a couple of
+/** Click-to-place, like the Point/Circle tools, using whichever category is "armed" via the Library panel. Unlike those tools this needs a couple of
  * DB reads (the snapshot + tag-letter lookup) before it can commit, so it's async — React
  * event handlers tolerate that fine (fire-and-forget). Stays armed after placing so you
  * can drop several of the same component in a row; Escape/switching tools clears it (see
@@ -20,7 +19,7 @@ export async function componentOnPointerDown(world: Vec2, ctx: ToolCtx) {
   const snap = computeSnap({ cursor: world, graph, threshold: worldThreshold(), gridSize, disabled: ctx.interaction.altHeld });
 
   const [snapshot, category] = await Promise.all([
-    buildComponentSnapshot(armed.categoryId, armed.realPartId),
+    buildComponentSnapshot(armed.categoryId),
     getCategory(armed.categoryId),
   ]);
   if (!snapshot || !category) return;
@@ -34,7 +33,7 @@ export async function componentOnPointerDown(world: Vec2, ctx: ToolCtx) {
   const existingTags = [...state.graph.components.values()].map((c) => c.tag);
   const tag = suggestTag(existingTags, letter);
 
-  state.placeComponent({ categoryId: armed.categoryId, realPartId: armed.realPartId, position: snap.point, tag, snapshot });
+  state.placeComponent({ categoryId: armed.categoryId, position: snap.point, tag, snapshot });
   ctx.requestRedraw();
 }
 

@@ -1,15 +1,16 @@
 import { useEffect, useState } from 'react';
+import { describeImport, exportLibrary, importLibraryFile } from '../io/libraryIO';
 import { CategorySection } from './CategoryForm';
 import * as db from './db';
 import { describeError } from './errors';
 import { FamilyManager } from './FamilyManager';
-import { chooseLibraryRoot, getLibraryRoot } from './libraryRoot';
-import { syncLibraryFromDisk } from './librarySync';
 
 /** Toggleable sidebar (replaces the Properties Panel in the same slot while open — see
  * App.tsx) for browsing/placing components and managing the library: families (loose
- * groupings like Valve/Pump), categories (the symbol-owning classification, each with
- * its own configurable attribute schema), and real parts. */
+ * groupings like Valve/Pump) and the components inside them, each with its own drawing.
+ *
+ * Sharing is file-based: Export writes components out, Import adds someone else's to your
+ * library without replacing anything you already have. */
 export function LibraryPanel() {
   const [families, setFamilies] = useState<db.Family[]>([]);
   const [selectedFamilyId, setSelectedFamilyId] = useState<string | null>(null);
@@ -17,9 +18,7 @@ export function LibraryPanel() {
   const [reloadKey, setReloadKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [editMode, setEditMode] = useState(false);
-  const [libraryRoot, setLibraryRootState] = useState<string | null>(() => getLibraryRoot());
-  const [syncing, setSyncing] = useState(false);
-  const [syncStatus, setSyncStatus] = useState<string | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -27,7 +26,8 @@ export function LibraryPanel() {
       .then((fams) => {
         if (cancelled) return;
         setFamilies(fams);
-        setSelectedFamilyId((current) => current ?? fams[0]?.id ?? null);
+        // Keep the current tab if it still exists (an import may have added others).
+        setSelectedFamilyId((current) => (current && fams.some((f) => f.id === current) ? current : fams[0]?.id ?? null));
         setError(null);
       })
       .catch((e: unknown) => {
@@ -38,40 +38,41 @@ export function LibraryPanel() {
     };
   }, [reloadKey]);
 
-  // Pick up anything a teammate (or the catalog-import pipeline) added to the shared
-  // folder since this app last ran, without requiring a manual "Sync Now" every time.
-  useEffect(() => {
-    if (!libraryRoot) return;
-    void runSync(libraryRoot);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   const refresh = () => setReloadKey((k) => k + 1);
 
-  const runSync = async (root: string) => {
-    setSyncing(true);
-    setSyncStatus(null);
+  const importFile = async () => {
+    setStatus(null);
     try {
-      const result = await syncLibraryFromDisk(root);
-      setSyncStatus(
-        `Synced ${result.families} families, ${result.categories} categories, ${result.parts} parts from disk.`,
-      );
-      refresh();
+      const summary = await importLibraryFile();
+      if (summary) {
+        setStatus(describeImport(summary));
+        refresh();
+      }
     } catch (e) {
-      setSyncStatus(`Sync failed: ${describeError(e)}`);
-    } finally {
-      setSyncing(false);
+      setStatus(`Import failed: ${describeError(e)}`);
     }
   };
 
-  const connectFolder = async () => {
-    const picked = await chooseLibraryRoot().catch((e: unknown) => {
-      setSyncStatus(`Couldn't open folder picker: ${describeError(e)}`);
-      return null;
-    });
-    if (!picked) return;
-    setLibraryRootState(picked);
-    await runSync(picked);
+  const exportAll = async () => {
+    setStatus(null);
+    try {
+      const n = await exportLibrary();
+      setStatus(n > 0 ? `Exported ${n} component${n === 1 ? '' : 's'}.` : 'Nothing to export yet.');
+    } catch (e) {
+      setStatus(`Export failed: ${describeError(e)}`);
+    }
+  };
+
+  const resetLibrary = async () => {
+    if (!window.confirm('Replace your whole library with the built-in default? Components you added or changed will be lost. Export first if you want to keep them.')) return;
+    setStatus(null);
+    try {
+      await db.resetToDefaultLibrary();
+      setStatus('Library reset to the default.');
+      refresh();
+    } catch (e) {
+      setStatus(`Reset failed: ${describeError(e)}`);
+    }
   };
 
   return (
@@ -82,7 +83,7 @@ export function LibraryPanel() {
           <button
             className={editMode ? 'active' : ''}
             onClick={() => setEditMode((m) => !m)}
-            title="Reveals the library-authoring actions — rename, attribute schema, symbol drawing, Delete — off by default so browsing/placing can't accidentally change anything"
+            title="Reveals the library-authoring actions — rename, draw, export, Delete — off by default so browsing/placing can't accidentally change anything"
           >
             {editMode ? 'Done Editing' : 'Edit'}
           </button>
@@ -91,32 +92,26 @@ export function LibraryPanel() {
       </div>
 
       <div className="library-sync-row">
-        {libraryRoot ? (
-          <>
-            <span className="library-sync-path library-muted" title={libraryRoot}>
-              📁 {libraryRoot}
-            </span>
-            <button onClick={() => void runSync(libraryRoot)} disabled={syncing} title="Re-read the connected folder and apply any changes">
-              {syncing ? 'Syncing…' : 'Sync Now'}
-            </button>
-            <button onClick={() => void connectFolder()} title="Connect a different library-data folder">
-              Change…
-            </button>
-          </>
-        ) : (
-          <button onClick={() => void connectFolder()} title="Connect this library to a shared library-data folder so families/categories/parts are read from (and saved to) disk instead of only this machine">
-            Connect Library Folder…
+        <button onClick={() => void importFile()} title="Add components from a library file someone shared — nothing you already have is replaced">
+          Import…
+        </button>
+        <button onClick={() => void exportAll()} title="Save your whole library to a file you can share or back up">
+          Export All
+        </button>
+        {editMode && (
+          <button className="library-icon-button--danger" onClick={() => void resetLibrary()} title="Replace your library with the built-in default">
+            Reset
           </button>
         )}
       </div>
-      {syncStatus && <p className="library-muted">{syncStatus}</p>}
+      {status && <p className="library-muted">{status}</p>}
 
       {error && <p className="field-error">Couldn't load the library: {error}</p>}
 
       {managingFamilies ? (
         <FamilyManager families={families} onChange={refresh} editMode={editMode} />
       ) : families.length === 0 ? (
-        !error && <p className="properties-panel--empty">No families yet — use "Manage Families" to add one.</p>
+        !error && <p className="properties-panel--empty">No families yet — use "Manage Families" to add one, or Import a library file.</p>
       ) : (
         <>
           <div className="library-category-tabs">
@@ -126,7 +121,8 @@ export function LibraryPanel() {
               </button>
             ))}
           </div>
-          {selectedFamilyId && <CategorySection familyId={selectedFamilyId} editMode={editMode} />}
+          {/* Keyed on the reload counter so an import or reset re-reads the list. */}
+          {selectedFamilyId && <CategorySection key={`${selectedFamilyId}:${reloadKey}`} familyId={selectedFamilyId} editMode={editMode} />}
         </>
       )}
     </div>

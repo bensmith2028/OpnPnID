@@ -1,19 +1,20 @@
 /**
- * The browser half of file import/export — the two things a plain browser tab has in place
- * of the native save/open dialogs. Shared by projectIO (whole drawings) and symbolIO
- * (single part drawings) so both kinds of file move the same way; the Tauri paths stay in
- * those modules, since only they know their own dialog filters and default names.
+ * How files get in and out of the app: a download to save, a file picker to open. Shared by
+ * every kind of file (drawings, symbols, libraries, PDF, CSV) so they all move the same way.
  */
 
-/** Hand text to the download manager (the same Blob + anchor idiom the library's CSV
- * template export uses). */
-export function downloadText(fileName: string, text: string): void {
-  const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+/** Hand a blob to the download manager. */
+export function downloadBlob(fileName: string, blob: Blob): void {
+  const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
   a.download = fileName;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+export function downloadText(fileName: string, text: string, mimeType = 'application/json'): void {
+  downloadBlob(fileName, new Blob([text], { type: mimeType }));
 }
 
 /** Choose a file to read — a transient file input, since there's no native dialog to ask.

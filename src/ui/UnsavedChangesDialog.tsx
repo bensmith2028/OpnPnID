@@ -8,26 +8,24 @@ import { performGuardedAction } from './unsavedGuard';
  * to name it, or "your changes will be lost" gives the user no way to tell a misclicked
  * New from the close they meant. */
 const PROMPTS: Record<GuardedAction, { question: string; consequence: string }> = {
-  quit: { question: 'Save changes before closing?', consequence: 'If you close now, those changes are lost.' },
   new: { question: 'Save changes before starting a new drawing?', consequence: 'A new drawing replaces this one, and those changes are lost.' },
   open: { question: 'Save changes before opening another project?', consequence: 'Opening a project replaces this one, and those changes are lost.' },
 };
 
-/** The prompt shown when closing/quitting, New, or Open would throw away unsaved edits —
+/** The prompt shown when New or Open would throw away unsaved edits —
  * see unsavedGuard.ts for what raises it and what each answer then does.
  *
- * Hand-built rather than a native dialog because the answer has three branches (save,
- * discard, stay), and the native dialog plugin only offers two buttons. Same reason it
- * isn't a `window.confirm`, which additionally blocks the whole webview thread. */
+ * Hand-built rather than a `window.confirm` because the answer has three branches (save,
+ * discard, stay), and confirm only offers two. */
 export function UnsavedChangesDialog({ action }: { action: GuardedAction }) {
   const filePath = useSketchStore((s) => s.filePath);
   const dismiss = () => useSketchStore.getState().setPendingGuardedAction(null);
-  // Which answer is in flight, if any — both take a round trip through a native dialog, so
+  // Which answer is in flight, if any — both can take a moment, so
   // the buttons lock until one settles, and only the Save button reports itself as working.
   const [busy, setBusy] = useState<'saving' | 'proceeding' | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Scoped Escape handling, like RealHardwareModal's: Escape means "stay where I am", and
+  // Scoped Escape handling: Escape means "stay where I am", and
   // must not also reach SketchCanvas's global handler and start changing tools underneath.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -66,10 +64,9 @@ export function UnsavedChangesDialog({ action }: { action: GuardedAction }) {
       setError(describeError(e));
       return;
     }
-    // A project that's never been saved goes through a native Save dialog, which the user
-    // can back out of — that leaves the document still dirty, and going ahead anyway would
-    // throw away exactly the work they just asked to keep. Backing out of the save is
-    // treated as backing out of the whole thing.
+    // If the save somehow left the document dirty, going ahead anyway would throw away
+    // exactly the work they just asked to keep — so treat that as backing out of the whole
+    // thing.
     if (useSketchStore.getState().dirty) {
       setBusy(null);
       dismiss();

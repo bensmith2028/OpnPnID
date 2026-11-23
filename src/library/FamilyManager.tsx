@@ -11,8 +11,8 @@ export function normalizeTagLetter(raw: string): string | null {
 }
 
 /** Family list + add form — a loose grouping (Valve, Pump, Instrument, ...) used only
- * for browsing and the ISA-lite tag-letter default. Families own no symbol/attribute
- * logic of their own; that all lives on the categories inside them (see CategoryForm).
+ * for browsing and the ISA-lite tag-letter default. Families own no symbol logic of
+ * their own; that all lives on the components inside them (see CategoryForm).
  * `editMode` gates the Delete button and the inline edit boxes (see LibraryPanel's Edit
  * toggle). */
 export function FamilyManager({ families, onChange, editMode }: { families: db.Family[]; onChange: () => void; editMode: boolean }) {
@@ -47,11 +47,10 @@ export function FamilyManager({ families, onChange, editMode }: { families: db.F
   };
 
   const removeFamily = async (id: string, name: string) => {
-    // Deleting a family cascades to its categories, and from there to their attribute
-    // definitions and real parts — the most destructive single action in the library,
-    // so it gets a confirmation even though the Delete button itself is already
-    // edit-mode-gated.
-    if (!window.confirm(`Delete "${name}" and everything in it (categories, attributes, real parts)? This can't be undone.`)) return;
+    // Deleting a family removes all of its components and their drawings — the most
+    // destructive single action in the library, so it gets a confirmation even though the
+    // Delete button itself is already edit-mode-gated.
+    if (!window.confirm(`Delete "${name}" and everything in it (components and their drawings)? This can't be undone.`)) return;
     setError(null);
     try {
       await db.deleteFamily(id);
@@ -69,10 +68,8 @@ export function FamilyManager({ families, onChange, editMode }: { families: db.F
             <div className="library-list-row">
               {/* Browsing shows the family as plain text; in edit mode both of its fields
                   become text boxes so they can be corrected in place — otherwise fixing a
-                  typo means deleting the family, which cascades away every category and
-                  real part inside it. Unlike a category row there's no expand toggle to
-                  displace: a family row has nothing to expand, so its name was never a
-                  button and no chevron is needed. */}
+                  typo means deleting the family, which removes every component inside
+                  it. */}
               {editMode ? (
                 <>
                   <FamilyNameInput family={f} onRename={(name) => void updateFamily(f, { name })} />

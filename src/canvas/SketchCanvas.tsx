@@ -1,6 +1,4 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { isSymbolEditorOpen } from '../library/symbolEditorActive';
-import { applyTextFieldMenuAction, isTextEditableFocus, onNativeMenuAction } from '../platform/menuBridge';
 import type { Id, Vec2 } from '../types/geometry';
 import { render } from './renderer';
 import { DEFAULT_TEXT_FONT_SIZE, useSketchStore } from './store/useSketchStore';
@@ -11,7 +9,6 @@ import { drawCircleCancel, drawCircleOnPointerDown, drawCircleOnPointerMove } fr
 import { componentOnPointerDown, componentOnPointerMove } from './tools/componentTool';
 import { pointOnPointerDown, pointOnPointerMove } from './tools/pointTool';
 import {
-  componentAtWorld,
   componentLabelAtWorld,
   selectOnPointerDown,
   selectOnPointerMove,
@@ -292,8 +289,6 @@ export function SketchCanvas() {
         useSketchStore.getState().resetComponentLabelOffsets(label.instance.id, label.kind);
         return;
       }
-      const instance = componentAtWorld(world);
-      if (instance) useSketchStore.getState().openRealHardwareModal(instance.id);
     },
     [activeTool, openTextEditor],
   );
@@ -309,12 +304,7 @@ export function SketchCanvas() {
 
   // Keyboard shortcuts: Escape, Delete, Undo/Redo, Copy/Paste (selected components and/or
   // lines/arcs/points), Space-to-pan, Alt-to-disable-snap. Undo/Redo/Copy/Paste are also
-  // handled here via a plain Ctrl/Cmd+Z|Y|C|V keydown check — this is the *only* path on
-  // Windows/Linux, and
-  // still a live fallback on macOS for Cmd+Y (redo), which isn't bound to a native menu
-  // item below. Cmd+Z/C/V *are* claimed by the native Edit menu on macOS (see the
-  // `onNativeMenuAction` effect below), so AppKit consumes those accelerators before they'd
-  // ever reach this handler as a keydown there — no double-handling in practice.
+  // handled here via a plain Ctrl/Cmd+Z|Y|C|V keydown check.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
@@ -370,29 +360,6 @@ export function SketchCanvas() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTool]);
-
-  // Native macOS Edit-menu bridge (see src-tauri/src/lib.rs + src/platform/menuBridge.ts).
-  // Undo/Redo/Cut/Copy/Paste/Select All arrive here as `app-menu` events instead of
-  // `keydown` on macOS. Defers entirely to the symbol editor's own bridge listener while
-  // that modal is open on top, so the same menu click doesn't get handled twice.
-  useEffect(
-    () =>
-      onNativeMenuAction((action) => {
-        if (isTextEditableFocus()) {
-          applyTextFieldMenuAction(action);
-          return;
-        }
-        if (isSymbolEditorOpen()) return;
-        const store = useSketchStore.getState();
-        if (action === 'copy') store.copySelection();
-        else if (action === 'paste') store.pasteSelection();
-        else if (action === 'undo') store.undo();
-        else if (action === 'redo') store.redo();
-        else if (action === 'selectAll') store.selectAll();
-        // 'cut' isn't a supported gesture on the main canvas today.
-      }),
-    [],
-  );
 
   // Recomputed on every render (which `camera` being a subscribed value guarantees for
   // pan/zoom), so an open editor tracks the note's world position instead of sticking to

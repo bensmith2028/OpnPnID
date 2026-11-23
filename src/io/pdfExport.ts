@@ -1,5 +1,3 @@
-import { save } from '@tauri-apps/plugin-dialog';
-import { writeFile } from '@tauri-apps/plugin-fs';
 import jsPDF from 'jspdf';
 import { render } from '../canvas/renderer';
 import { useSketchStore } from '../canvas/store/useSketchStore';
@@ -7,6 +5,7 @@ import { createInteractionState } from '../canvas/tools/types';
 import { fitCameraToContent } from '../canvas/viewport';
 import type { SceneGraph } from '../canvas/sceneGraph';
 import type { Selection } from '../types/geometry';
+import { downloadBlob } from './fileTransfer';
 
 // Roughly a landscape US-letter page at ~150dpi — doesn't need to be exact, just a
 // decent fixed resolution for the offscreen render that becomes the embedded image.
@@ -109,9 +108,5 @@ export async function exportPdf(): Promise<void> {
   doc.text(projectName, margin, pageHeight - margin + 0.2);
   doc.text(`Exported ${exportDate}`, pageWidth - margin, pageHeight - margin + 0.2, { align: 'right' });
 
-  const path = await save({ filters: [{ name: 'PDF', extensions: ['pdf'] }], defaultPath: `${projectName.replace(/\.pnid\.json$/, '')}.pdf` });
-  if (!path) return;
-
-  const bytes = new Uint8Array(doc.output('arraybuffer'));
-  await writeFile(path, bytes);
+  downloadBlob(`${projectName.replace(/\.pnid\.json$/, '')}.pdf`, doc.output('blob'));
 }

@@ -8,7 +8,7 @@ import { selectOnPointerDown, selectOnPointerMove, selectOnPointerUp } from './s
 import { textPlacementPoint } from './textTool';
 
 function sampleSnapshot(): ComponentSnapshot {
-  return { familyName: 'Valve', categoryName: 'Test Valve', symbol: generatePlaceholderSymbol(2), realPart: null };
+  return { familyName: 'Valve', categoryName: 'Test Valve', symbol: generatePlaceholderSymbol(2) };
 }
 
 function newCtx() {
@@ -28,9 +28,9 @@ beforeEach(() => {
 describe('multi-component group drag (regression: copy/paste then dragging used to move only one of the pasted components)', () => {
   it('drags every selected component together by the same delta, and leaves the selection intact', () => {
     const { placeComponent } = useSketchStore.getState();
-    placeComponent({ categoryId: 'cat1', realPartId: null, position: { x: 0, y: 0 }, tag: 'V-101', snapshot: sampleSnapshot() });
+    placeComponent({ categoryId: 'cat1', position: { x: 0, y: 0 }, tag: 'V-101', snapshot: sampleSnapshot() });
     const id1 = [...useSketchStore.getState().selection.componentIds][0];
-    placeComponent({ categoryId: 'cat1', realPartId: null, position: { x: 50, y: 0 }, tag: 'V-102', snapshot: sampleSnapshot() });
+    placeComponent({ categoryId: 'cat1', position: { x: 50, y: 0 }, tag: 'V-102', snapshot: sampleSnapshot() });
     const id2 = [...useSketchStore.getState().selection.componentIds][0];
 
     // Simulate "select both" (what copySelection/pasteSelection leaves behind).
@@ -52,9 +52,9 @@ describe('multi-component group drag (regression: copy/paste then dragging used 
 
   it('still does a normal single-component drag when clicking something outside the current selection', () => {
     const { placeComponent } = useSketchStore.getState();
-    placeComponent({ categoryId: 'cat1', realPartId: null, position: { x: 0, y: 0 }, tag: 'V-101', snapshot: sampleSnapshot() });
+    placeComponent({ categoryId: 'cat1', position: { x: 0, y: 0 }, tag: 'V-101', snapshot: sampleSnapshot() });
     const id1 = [...useSketchStore.getState().selection.componentIds][0];
-    placeComponent({ categoryId: 'cat1', realPartId: null, position: { x: 50, y: 0 }, tag: 'V-102', snapshot: sampleSnapshot() });
+    placeComponent({ categoryId: 'cat1', position: { x: 50, y: 0 }, tag: 'V-102', snapshot: sampleSnapshot() });
     const id2 = [...useSketchStore.getState().selection.componentIds][0];
 
     useSketchStore.setState((s) => ({ selection: { ...s.selection, componentIds: new Set([id1, id2]) } }));
@@ -145,7 +145,7 @@ describe('dragging a component label out of the way', () => {
    * so a test can click the label where it actually appears rather than hard-coding an
    * offset that the automatic placement is free to change. */
   function placedWithTagAt(position: Vec2, tag = 'V-101') {
-    useSketchStore.getState().placeComponent({ categoryId: 'cat1', realPartId: null, position, tag, snapshot: sampleSnapshot() });
+    useSketchStore.getState().placeComponent({ categoryId: 'cat1', position, tag, snapshot: sampleSnapshot() });
     const id = [...useSketchStore.getState().selection.componentIds][0];
     const { graph, componentScale, camera } = useSketchStore.getState();
     const instance = graph.components.get(id)!;
@@ -455,7 +455,7 @@ describe('picking things at the smallest allowed snap threshold', () => {
 describe('the snap indicator after a drag', () => {
   it('clears the leftover marker on pointer-up for a component drag, like a point drag', () => {
     const { placeComponent } = useSketchStore.getState();
-    placeComponent({ categoryId: 'cat1', realPartId: null, position: { x: 0, y: 0 }, tag: 'V-101', snapshot: sampleSnapshot() });
+    placeComponent({ categoryId: 'cat1', position: { x: 0, y: 0 }, tag: 'V-101', snapshot: sampleSnapshot() });
 
     const ctx = newCtx();
     selectOnPointerDown({ x: 0, y: 0 }, false, ctx);
